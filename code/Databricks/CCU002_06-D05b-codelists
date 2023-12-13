@@ -1,0 +1,175 @@
+# Databricks notebook source
+# MAGIC %md # CCU002_06-D05b-codelists
+# MAGIC
+# MAGIC **Description** This notebook applies groupings to the unformatted codelists for the CCU002_06 project.
+# MAGIC
+# MAGIC **Last edited** 9/08/22
+# MAGIC
+# MAGIC **Authors** Teri North
+
+# COMMAND ----------
+
+# MAGIC %md ## Clear cache
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CLEAR CACHE
+
+# COMMAND ----------
+
+# MAGIC %md ## Refresh tables
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC REFRESH TABLE dars_nic_391419_j3w9t_collab.ccu002_06_codelists_unformatted
+
+# COMMAND ----------
+
+# MAGIC %md ## Define functions
+
+# COMMAND ----------
+
+# Define create table function by Sam Hollings
+# Source: Workspaces/dars_nic_391419_j3w9t_collab/DATA_CURATION_wrang000_functions
+
+def create_table(table_name:str, database_name:str='dars_nic_391419_j3w9t_collab', select_sql_script:str=None) -> None:
+  """Will save to table from a global_temp view of the same name as the supplied table name (if no SQL script is supplied)
+  Otherwise, can supply a SQL script and this will be used to make the table with the specificed name, in the specifcied database."""
+  
+  spark.conf.set("spark.sql.legacy.allowCreatingManagedTableUsingNonemptyLocation","true")
+  
+  if select_sql_script is None:
+    select_sql_script = f"SELECT * FROM global_temp.{table_name}"
+  
+  spark.sql(f"""CREATE TABLE {database_name}.{table_name} AS
+                {select_sql_script}
+             """)
+  spark.sql(f"ALTER TABLE {database_name}.{table_name} OWNER TO {database_name}")
+  
+def drop_table(table_name:str, database_name:str='dars_nic_391419_j3w9t_collab', if_exists=True):
+  if if_exists:
+    IF_EXISTS = 'IF EXISTS'
+  else: 
+    IF_EXISTS = ''
+  spark.sql(f"DROP TABLE {IF_EXISTS} {database_name}.{table_name}")
+
+# COMMAND ----------
+
+# MAGIC %md ## Group Names
+# MAGIC
+# MAGIC Make new columns for the final codelist table which group codes for outcomes, covariates and composite outcomes
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_precodelists AS
+# MAGIC SELECT name AS name,
+# MAGIC       terminology AS terminology,
+# MAGIC       code AS code,
+# MAGIC       term AS term,
+# MAGIC       CASE WHEN name='AMI' OR name='AMI_covariate_only' THEN 'ami'
+# MAGIC           WHEN name='diabetes' OR name='diabetes_drugs' THEN 'diabetes'
+# MAGIC           WHEN name='depression' THEN 'depression'
+# MAGIC           WHEN name='BMI_obesity' THEN 'bmi_obesity'
+# MAGIC           WHEN name='cancer' THEN 'cancer'
+# MAGIC           WHEN name='COPD' THEN 'copd'
+# MAGIC           WHEN name='CKD' THEN 'ckd'
+# MAGIC           WHEN name='liver_disease' THEN 'liver_disease'
+# MAGIC           WHEN name='dementia' OR name='dementia_vascular' THEN 'dementia'
+# MAGIC           WHEN name='stroke_isch' OR name='stroke_SAH_HS' OR name='stroke_SAH_HS_covariate_only' THEN 'stroke_all'
+# MAGIC           WHEN name='DVT_DVT' OR name='DVT_pregnancy' OR name='PE' OR name='PE_covariate_only' OR name='VT_covariate_only' OR name='other_DVT' OR name='portal_vein_thrombosis' OR name='DVT_ICVT' OR name='ICVT_pregnancy' OR name='DVT_ICVT_covariate_only' THEN 'all_vte'
+# MAGIC           WHEN name='thrombophilia' THEN 'thrombophilia' END AS group_name_cov,
+# MAGIC       CASE WHEN name='AMI' THEN 'ami'
+# MAGIC           WHEN name='stroke_isch' THEN 'stroke_isch'
+# MAGIC           WHEN name='other_arterial_embolism' THEN 'other_arterial_embolism'
+# MAGIC           WHEN name='PE' THEN 'pe' 
+# MAGIC           WHEN name='DVT_DVT' OR name='DVT_pregnancy' THEN 'dvt' 
+# MAGIC           WHEN name='DVT_ICVT' OR name='ICVT_pregnancy' THEN 'icvt' 
+# MAGIC           WHEN name='portal_vein_thrombosis' THEN 'portal_vein_thrombosis' 
+# MAGIC           WHEN name='TTP' OR name='thrombocytopenia' THEN 'any_thrombocytopenia' 
+# MAGIC           WHEN name='stroke_SAH_HS' THEN 'stroke_sah_hs' 
+# MAGIC           WHEN name='mesenteric_thrombus' THEN 'mesenteric_thrombus'
+# MAGIC           WHEN name='myocarditis' THEN 'myocarditis'
+# MAGIC           WHEN name='pericarditis' THEN 'pericarditis' END AS group_name_out
+# MAGIC FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists_unformatted   
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT (*) FROM global_temp.ccu002_06_precodelists
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_pre2codelists AS
+# MAGIC SELECT name AS name,
+# MAGIC       terminology AS terminology,
+# MAGIC       REGEXP_REPLACE(code,'[\.]','') AS code,
+# MAGIC       term AS term,
+# MAGIC       group_name_cov AS group_name_cov,
+# MAGIC       group_name_out AS group_name_out,
+# MAGIC       CASE WHEN group_name_out='ami' OR group_name_out='stroke_isch' OR group_name_out='other_arterial_embolism' THEN 'arterial'
+# MAGIC           WHEN group_name_out='pe' OR group_name_out='dvt' OR group_name_out='icvt' OR group_name_out='portal_vein_thrombosis' THEN 'venous' END AS composite,
+# MAGIC       CASE WHEN group_name_cov='all_vte' THEN 'cov_venous'
+# MAGIC           WHEN group_name_cov='ami' OR name='stroke_isch' OR name='other_arterial_embolism' THEN 'cov_arterial' END AS cov_composite 
+# MAGIC FROM global_temp.ccu002_06_precodelists
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_codelists AS
+# MAGIC SELECT name AS name,
+# MAGIC       terminology AS terminology,
+# MAGIC       CASE WHEN terminology='CTV3_SNOMEDmapped' THEN term
+# MAGIC           WHEN terminology!='CTV3_SNOMEDmapped' THEN code END AS code,
+# MAGIC       CASE WHEN terminology='CTV3_SNOMEDmapped' THEN code
+# MAGIC           WHEN terminology!='CTV3_SNOMEDmapped' THEN term END AS term,
+# MAGIC       group_name_cov AS group_name_cov,
+# MAGIC       group_name_out AS group_name_out,
+# MAGIC       composite AS composite,
+# MAGIC       cov_composite AS cov_composite      
+# MAGIC FROM global_temp.ccu002_06_pre2codelists
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT *
+# MAGIC FROM global_temp.ccu002_06_codelists
+# MAGIC WHERE terminology='CTV3_SNOMEDmapped'
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT *
+# MAGIC FROM global_temp.ccu002_06_codelists
+# MAGIC WHERE composite='venous'
+
+# COMMAND ----------
+
+# MAGIC %md ## Save formatted codelists
+
+# COMMAND ----------
+
+drop_table("ccu002_06_codelists")
+
+# COMMAND ----------
+
+create_table("ccu002_06_codelists")
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT *
+# MAGIC FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC DESCRIBE dars_nic_391419_j3w9t_collab.ccu002_06_codelists
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT (*) FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists
