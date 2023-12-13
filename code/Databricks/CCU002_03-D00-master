@@ -1,0 +1,41 @@
+# Databricks notebook source
+# MAGIC %md  # CCU002_03-D00-master
+# MAGIC
+# MAGIC **Description** This notebook runs all notebooks in the correct order.
+# MAGIC
+# MAGIC **Author(s)** Venexia Walker
+
+# COMMAND ----------
+
+# Step 1: preserve data used for present project
+dbutils.notebook.run("CCU002_06-D01-project_table_freeze", 3600)
+
+# COMMAND ----------
+
+dbutils.notebook.run("CCU002_06-D02-patient_skinny_unassembled", 3600)
+
+# COMMAND ----------
+
+dbutils.notebook.run("CCU002_06-D03-patient_skinny_assembled", 3600)
+
+# COMMAND ----------
+
+dbutils.notebook.run("CCU002_06-D04-custom_tables", 3600)
+
+# COMMAND ----------
+
+# Step 6: perform quality assurance checks
+
+dbutils.notebook.run("CCU002_06-D06-quality_assurance", 3600)
+
+# COMMAND ----------
+
+# Step 7: implement general inclusion and exclusion critera
+
+dbutils.notebook.run("CCU002_06-D07-inclusion_exclusion", 3600)
+
+# COMMAND ----------
+
+# Step 8: define exposures
+
+# dbutils.notebook.run("CCU002_06-D08-exposures", 3600)
