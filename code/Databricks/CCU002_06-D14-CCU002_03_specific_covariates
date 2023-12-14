@@ -1,0 +1,100 @@
+# Databricks notebook source
+# MAGIC %md # CCU002_06-D14-CCU002_03_specific_covariates
+# MAGIC
+# MAGIC **Description** This notebook extracts covariates in CCU002_03 but not CCU002_06.
+# MAGIC
+# MAGIC **Author(s)** Venexia Walker
+
+# COMMAND ----------
+
+# MAGIC %md ## Clear cache
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CLEAR CACHE
+
+# COMMAND ----------
+
+# MAGIC %md ## Specify parameters
+
+# COMMAND ----------
+
+index_date = '2020-12-08'
+
+# COMMAND ----------
+
+# MAGIC %md ## Medical history
+
+# COMMAND ----------
+
+medhistory = ['myocarditis','pericarditis']
+
+# COMMAND ----------
+
+# MAGIC %md ### HES APC
+
+# COMMAND ----------
+
+for codelist in medhistory:
+   sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_hesapc_" + codelist + " AS SELECT DISTINCT NHS_NUMBER_DEID FROM (SELECT NHS_NUMBER_DEID, EPISTART FROM dars_nic_391419_j3w9t_collab.ccu002_06_hes_apc_longformat WHERE CODE IN (SELECT code FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists WHERE name = '" + codelist + "' AND TERMINOLOGY='ICD10')) WHERE EPISTART<'" + index_date + "'")
+
+# COMMAND ----------
+
+for codelist in medhistory:
+   sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose2_hesapc_" + codelist + " AS SELECT DISTINCT NHS_NUMBER_DEID FROM (SELECT cohort.NHS_NUMBER_DEID, cohort.vaccination_dose1_date, data.EPISTART FROM dars_nic_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output AS cohort LEFT JOIN (SELECT NHS_NUMBER_DEID, EPISTART FROM dars_nic_391419_j3w9t_collab.ccu002_06_hes_apc_longformat WHERE CODE IN (SELECT code FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists WHERE name = '" + codelist + "' AND TERMINOLOGY='ICD10')) AS data ON cohort.NHS_NUMBER_DEID = data.NHS_NUMBER_DEID) WHERE EPISTART<vaccination_dose1_date AND EPISTART IS NOT NULL AND vaccination_dose1_date IS NOT NULL")
+
+# COMMAND ----------
+
+# MAGIC %md ### SUS
+
+# COMMAND ----------
+
+for codelist in medhistory:
+   sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_sus_" + codelist + " AS SELECT DISTINCT NHS_NUMBER_DEID FROM (SELECT NHS_NUMBER_DEID, EPISODE_START_DATE FROM dars_nic_391419_j3w9t_collab.ccu002_06_sus_longformat WHERE ((CODE IN (SELECT code FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists WHERE name = '" + codelist + "' and terminology=='ICD10')) OR (LEFT(CODE,3) IN (SELECT code FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists WHERE name = '" + codelist + "' and terminology=='ICD10')))) WHERE EPISODE_START_DATE<'" + index_date + "'")
+
+# COMMAND ----------
+
+for codelist in medhistory:
+   sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose2_sus_" + codelist + " AS SELECT DISTINCT NHS_NUMBER_DEID FROM (SELECT cohort.NHS_NUMBER_DEID, cohort.vaccination_dose1_date, data.EPISODE_START_DATE FROM dars_nic_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output AS cohort LEFT JOIN (SELECT NHS_NUMBER_DEID, EPISODE_START_DATE FROM dars_nic_391419_j3w9t_collab.ccu002_06_sus_longformat WHERE ((CODE IN (SELECT code FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists WHERE name = '" + codelist + "' and terminology=='ICD10')) OR (LEFT(CODE,3) IN (SELECT code FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists WHERE name = '" + codelist + "' and terminology=='ICD10')))) AS data ON cohort.NHS_NUMBER_DEID = data.NHS_NUMBER_DEID) WHERE EPISODE_START_DATE<vaccination_dose1_date AND EPISODE_START_DATE IS NOT NULL AND vaccination_dose1_date IS NOT NULL")
+
+# COMMAND ----------
+
+# MAGIC %md ### Combined
+
+# COMMAND ----------
+
+for codelist in medhistory:
+   sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_" + codelist + " AS SELECT DISTINCT NHS_NUMBER_DEID, 1 AS cov_dose1_" + codelist + " FROM (SELECT NHS_NUMBER_DEID FROM global_temp.ccu002_06_cov_dose1_hesapc_" + codelist + " UNION ALL SELECT NHS_NUMBER_DEID FROM global_temp.ccu002_06_cov_dose1_sus_" + codelist + ") GROUP BY NHS_NUMBER_DEID")
+
+# COMMAND ----------
+
+for codelist in medhistory:
+   sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose2_" + codelist + " AS SELECT DISTINCT NHS_NUMBER_DEID, 1 AS cov_dose2_" + codelist + " FROM (SELECT NHS_NUMBER_DEID FROM global_temp.ccu002_06_cov_dose2_hesapc_" + codelist + " UNION ALL SELECT NHS_NUMBER_DEID FROM global_temp.ccu002_06_cov_dose2_sus_" + codelist + ") GROUP BY NHS_NUMBER_DEID")
+
+# COMMAND ----------
+
+# MAGIC %md ## Make table
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC --DROP TABLE dars_nic_391419_j3w9t_collab.ccu002_06_ccu002_03_specific_covariates_3mil
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE TABLE dars_nic_391419_j3w9t_collab.ccu002_06_ccu002_03_specific_covariates_3mil AS
+# MAGIC SELECT cohort.NHS_NUMBER_DEID,
+# MAGIC        CASE WHEN (cov_dose1_pericarditis.cov_dose1_pericarditis=1 OR cov_dose1_myocarditis.cov_dose1_myocarditis=1) THEN 1 ELSE 0 END AS cov_dose1_myo_or_pericarditis,
+# MAGIC        CASE WHEN (cov_dose2_pericarditis.cov_dose2_pericarditis=1 OR cov_dose2_myocarditis.cov_dose2_myocarditis=1) THEN 1 ELSE 0 END AS cov_dose2_myo_or_pericarditis
+# MAGIC FROM dars_nic_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output_3mil AS cohort
+# MAGIC LEFT JOIN global_temp.ccu002_06_cov_dose1_pericarditis AS cov_dose1_pericarditis ON cohort.NHS_NUMBER_DEID = cov_dose1_pericarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN global_temp.ccu002_06_cov_dose1_myocarditis AS cov_dose1_myocarditis ON cohort.NHS_NUMBER_DEID = cov_dose1_myocarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN global_temp.ccu002_06_cov_dose2_pericarditis AS cov_dose2_pericarditis ON cohort.NHS_NUMBER_DEID = cov_dose2_pericarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN global_temp.ccu002_06_cov_dose2_myocarditis AS cov_dose2_myocarditis ON cohort.NHS_NUMBER_DEID = cov_dose2_myocarditis.NHS_NUMBER_DEID
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC ALTER TABLE dars_nic_391419_j3w9t_collab.ccu002_06_ccu002_03_specific_covariates_3mil OWNER TO dars_nic_391419_j3w9t_collab
