@@ -1,0 +1,720 @@
+# Databricks notebook source
+# MAGIC %md # CCU002_06-D15-table1_3mil_newvac
+# MAGIC
+# MAGIC **Description** This notebook extracts the counts required for Table 1 (split into three sub tables)
+# MAGIC
+# MAGIC **Last edited** 12/09/23
+# MAGIC
+# MAGIC **Author(s)** Teri North
+# MAGIC
+# MAGIC **Notes** Updated table 1 to include latest cohort data, CV/CEV information (D18) and split by vaccine product
+
+# COMMAND ----------
+
+# MAGIC %md ##Clear cache
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CLEAR CACHE
+
+# COMMAND ----------
+
+# MAGIC %md ## Define functions
+
+# COMMAND ----------
+
+def drop_create_table(table_name:str, save2database_name:str='dsa_391419_j3w9t_collab'):
+    sql(f"""DROP TABLE IF EXISTS {save2database_name}.{table_name}""")
+    sql(f"""CREATE TABLE {save2database_name}.{table_name} AS SELECT * FROM {table_name} """)
+
+# COMMAND ----------
+
+# MAGIC %md ## Run checks on cohort spine table
+
+# COMMAND ----------
+
+# MAGIC %sql 
+# MAGIC SELECT COUNT (*) FROM dsa_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output_3mil_nv
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT(DISTINCT NHS_NUMBER_DEID) FROM dsa_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output_3mil_nv
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT MAX(vaccination_dose1_date) FROM dsa_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output_3mil_nv
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT MAX(vaccination_dose2_date) FROM dsa_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output_3mil_nv
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT MAX(vaccination_dose_booster_date) FROM dsa_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output_3mil_nv
+
+# COMMAND ----------
+
+# MAGIC %md ## CREATE A CV, CEV, NEITHER FLAG FROM D18 TABLES
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC --dsa_391419_j3w9t_collab.ccu002_06_cvflag_final_onlyflagged_20201208
+# MAGIC --dsa_391419_j3w9t_collab.ccu002_06_cov_dose1_cev_20201208
+# MAGIC
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_d15_cv_flag AS SELECT DISTINCT NHS_NUMBER_DEID, 1 AS CV FROM dsa_391419_j3w9t_collab.ccu002_06_cvflag_final_onlyflagged_20201208
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_d15_cev_flag AS SELECT DISTINCT NHS_NUMBER_DEID, 1 AS CEV FROM dsa_391419_j3w9t_collab.ccu002_06_cov_dose1_cev_20201208
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_d15_cv_cev_neither_flag AS 
+# MAGIC SELECT
+# MAGIC spine.NHS_NUMBER_DEID AS NHS_NUMBER_DEID,
+# MAGIC cv_input.CV AS CV,
+# MAGIC cev_input.CEV AS CEV
+# MAGIC FROM
+# MAGIC dsa_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output_3mil_nv AS spine
+# MAGIC LEFT JOIN ccu002_06_d15_cv_flag AS cv_input ON (spine.NHS_NUMBER_DEID=cv_input.NHS_NUMBER_DEID)
+# MAGIC LEFT JOIN ccu002_06_d15_cev_flag AS cev_input ON (spine.NHS_NUMBER_DEID=cev_input.NHS_NUMBER_DEID)
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_d15_cv_cev_neither_out_flag AS SELECT 
+# MAGIC NHS_NUMBER_DEID AS NHS_NUMBER_DEID,
+# MAGIC CASE WHEN (CV=1 AND CEV IS NULL) THEN 'cv' 
+# MAGIC     WHEN (CV IS NULL AND CEV=1) THEN 'cev'
+# MAGIC     WHEN (CV=1 AND CEV=1) THEN 'cev'
+# MAGIC     WHEN (CV IS NULL AND CEV IS NULL) THEN 'neither' END AS cv_cev_stat 
+# MAGIC FROM ccu002_06_d15_cv_cev_neither_flag
+# MAGIC
+# MAGIC
+
+# COMMAND ----------
+
+# MAGIC %md ## Define Populations 
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_dose1cov_input AS
+# MAGIC SELECT
+# MAGIC dose1input.NHS_NUMBER_DEID AS NHS_NUMBER_DEID,
+# MAGIC spineinput.cov_dose1_age AS cov_age,
+# MAGIC spineinput.cov_dose1_sex AS cov_sex,
+# MAGIC spineinput.cov_dose1_ethnicity AS cov_ethnicity,
+# MAGIC spineinput.cov_dose1_region AS cov_region,
+# MAGIC spineinput.cov_dose1_deprivation AS cov_deprivation,
+# MAGIC spineinput.vaccination_dose1_product AS dose1_product,
+# MAGIC spineinput.vaccination_dose1_date AS dose1_date,
+# MAGIC dose1input.cov_dose1_smoking_status AS cov_smoking_status,
+# MAGIC dose1input.cov_dose1_ami AS cov_ami,
+# MAGIC dose1input.cov_dose1_diabetes AS cov_diabetes,
+# MAGIC dose1input.cov_dose1_depression AS cov_depression,
+# MAGIC dose1input.cov_dose1_bmi_obesity AS cov_bmi_obesity,
+# MAGIC dose1input.cov_dose1_cancer AS cov_cancer,
+# MAGIC dose1input.cov_dose1_copd AS cov_copd,
+# MAGIC dose1input.cov_dose1_ckd AS cov_ckd,
+# MAGIC dose1input.cov_dose1_liver_disease AS cov_liver_disease,
+# MAGIC dose1input.cov_dose1_dementia AS cov_dementia,
+# MAGIC dose1input.cov_dose1_stroke_all AS cov_stroke_all,
+# MAGIC dose1input.cov_dose1_all_vte AS cov_all_vte,
+# MAGIC dose1input.cov_dose1_thrombophilia AS cov_thrombophilia,
+# MAGIC dose1input.cov_dose1_surgery AS cov_surgery_last_yr,
+# MAGIC dose1input.cov_dose1_disorders AS cov_n_disorders,
+# MAGIC dose1input.cov_dose1_prior_covid19 AS cov_prior_covid19,
+# MAGIC dose1input.cov_dose1_meds_antiplatelet AS cov_meds_antiplatelet,
+# MAGIC dose1input.cov_dose1_meds_bp_lowering AS cov_meds_bp_lowering,
+# MAGIC dose1input.cov_dose1_meds_lipid_lowering AS cov_meds_lipid_lowering,
+# MAGIC dose1input.cov_dose1_meds_anticoagulant AS cov_meds_anticoagulant,
+# MAGIC dose1input.cov_dose1_meds_cocp AS cov_meds_cocp,
+# MAGIC dose1input.cov_dose1_meds_hrt AS cov_meds_hrt,
+# MAGIC cv_cev_input.cv_cev_stat AS cov_cv_cev
+# MAGIC
+# MAGIC FROM dsa_391419_j3w9t_collab.ccu002_06_cohort_dose1_cov_3mil_nv AS dose1input
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output_3mil_nv AS spineinput ON (dose1input.NHS_NUMBER_DEID=spineinput.NHS_NUMBER_DEID) 
+# MAGIC LEFT JOIN ccu002_06_d15_cv_cev_neither_out_flag AS cv_cev_input ON (dose1input.NHS_NUMBER_DEID=cv_cev_input.NHS_NUMBER_DEID)
+# MAGIC
+# MAGIC
+# MAGIC -- AND dose1input.CHUNK=spineinput.CHUNK
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC SELECT DISTINCT vaccination_dose1_product FROM dsa_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output_3mil_nv
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC SELECT DISTINCT vaccination_dose2_product FROM dsa_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output_3mil_nv
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC SELECT DISTINCT vaccination_dose_booster_product FROM dsa_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output_3mil_nv
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_dose2cov_input AS
+# MAGIC SELECT
+# MAGIC
+# MAGIC dose2input.NHS_NUMBER_DEID AS NHS_NUMBER_DEID,
+# MAGIC spineinput.cov_dose2_age AS cov_age,
+# MAGIC spineinput.cov_dose2_sex AS cov_sex,
+# MAGIC spineinput.cov_dose2_ethnicity AS cov_ethnicity,
+# MAGIC spineinput.cov_dose2_region AS cov_region,
+# MAGIC spineinput.cov_dose2_deprivation AS cov_deprivation,
+# MAGIC spineinput.vaccination_dose1_product AS dose1_product,
+# MAGIC spineinput.vaccination_dose2_product AS dose2_product,
+# MAGIC spineinput.vaccination_dose1_date AS dose1_date,
+# MAGIC spineinput.vaccination_dose2_date AS dose2_date,
+# MAGIC dose2input.cov_dose2_smoking_status AS cov_smoking_status,
+# MAGIC dose2input.cov_dose2_ami AS cov_ami,
+# MAGIC dose2input.cov_dose2_diabetes AS cov_diabetes,
+# MAGIC dose2input.cov_dose2_depression AS cov_depression,
+# MAGIC dose2input.cov_dose2_bmi_obesity AS cov_bmi_obesity,
+# MAGIC dose2input.cov_dose2_cancer AS cov_cancer,
+# MAGIC dose2input.cov_dose2_copd AS cov_copd,
+# MAGIC dose2input.cov_dose2_ckd AS cov_ckd,
+# MAGIC dose2input.cov_dose2_liver_disease AS cov_liver_disease,
+# MAGIC dose2input.cov_dose2_dementia AS cov_dementia,
+# MAGIC dose2input.cov_dose2_stroke_all AS cov_stroke_all,
+# MAGIC dose2input.cov_dose2_all_vte AS cov_all_vte,
+# MAGIC dose2input.cov_dose2_thrombophilia AS cov_thrombophilia,
+# MAGIC dose2input.cov_dose2_surgery AS cov_surgery_last_yr,
+# MAGIC dose2input.cov_dose2_disorders AS cov_n_disorders,
+# MAGIC dose2input.cov_dose2_prior_covid19 AS cov_prior_covid19,
+# MAGIC dose2input.cov_dose2_meds_antiplatelet AS cov_meds_antiplatelet,
+# MAGIC dose2input.cov_dose2_meds_bp_lowering AS cov_meds_bp_lowering,
+# MAGIC dose2input.cov_dose2_meds_lipid_lowering AS cov_meds_lipid_lowering,
+# MAGIC dose2input.cov_dose2_meds_anticoagulant AS cov_meds_anticoagulant,
+# MAGIC dose2input.cov_dose2_meds_cocp AS cov_meds_cocp,
+# MAGIC dose2input.cov_dose2_meds_hrt AS cov_meds_hrt,
+# MAGIC cv_cev_input.cv_cev_stat AS cov_cv_cev
+# MAGIC
+# MAGIC FROM dsa_391419_j3w9t_collab.ccu002_06_cohort_dose2_cov_3mil_nv AS dose2input
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output_3mil_nv AS spineinput ON (dose2input.NHS_NUMBER_DEID=spineinput.NHS_NUMBER_DEID)
+# MAGIC LEFT JOIN ccu002_06_d15_cv_cev_neither_out_flag AS cv_cev_input ON (dose2input.NHS_NUMBER_DEID=cv_cev_input.NHS_NUMBER_DEID)
+# MAGIC WHERE (spineinput.cov_dose2_age IS NOT NULL AND spineinput.vaccination_dose1_product IS NOT NULL)
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_boostercov_input AS
+# MAGIC SELECT
+# MAGIC boostermain.NHS_NUMBER_DEID AS NHS_NUMBER_DEID,
+# MAGIC spineinput.cov_booster_age AS cov_age,
+# MAGIC spineinput.cov_booster_sex AS cov_sex,
+# MAGIC spineinput.cov_booster_ethnicity AS cov_ethnicity,
+# MAGIC spineinput.cov_booster_region AS cov_region,
+# MAGIC spineinput.cov_booster_deprivation AS cov_deprivation,
+# MAGIC spineinput.vaccination_dose1_product AS dose1_product,
+# MAGIC spineinput.vaccination_dose2_product AS dose2_product,
+# MAGIC spineinput.vaccination_dose_booster_product AS booster_product,
+# MAGIC spineinput.vaccination_dose1_date AS dose1_date,
+# MAGIC spineinput.vaccination_dose2_date AS dose2_date,
+# MAGIC spineinput.vaccination_dose_booster_date AS booster_date,
+# MAGIC boostermain.cov_booster_smoking_status AS cov_smoking_status,
+# MAGIC boostermain.cov_booster_ami AS cov_ami,
+# MAGIC boostermain.cov_booster_diabetes AS cov_diabetes,
+# MAGIC boostermain.cov_booster_depression AS cov_depression,
+# MAGIC boostermain.cov_booster_bmi_obesity AS cov_bmi_obesity,
+# MAGIC boostermain.cov_booster_cancer AS cov_cancer,
+# MAGIC boostermain.cov_booster_copd AS cov_copd,
+# MAGIC boostermain.cov_booster_ckd AS cov_ckd,
+# MAGIC boostermain.cov_booster_liver_disease AS cov_liver_disease,
+# MAGIC boostermain.cov_booster_dementia AS cov_dementia,
+# MAGIC boostermain.cov_booster_stroke_all AS cov_stroke_all,
+# MAGIC boostermain.cov_booster_all_vte AS cov_all_vte,
+# MAGIC boostermain.cov_booster_thrombophilia AS cov_thrombophilia,
+# MAGIC boostermain.cov_booster_surgery AS cov_surgery_last_yr,
+# MAGIC boostermain.cov_booster_disorders AS cov_n_disorders,
+# MAGIC boostermain.cov_booster_prior_covid19 AS cov_prior_covid19,
+# MAGIC boostermeds.cov_booster_meds_antiplatelet AS cov_meds_antiplatelet,
+# MAGIC boostermeds.cov_booster_meds_bp_lowering AS cov_meds_bp_lowering,
+# MAGIC boostermeds.cov_booster_meds_lipid_lowering AS cov_meds_lipid_lowering,
+# MAGIC boostermeds.cov_booster_meds_anticoagulant AS cov_meds_anticoagulant,
+# MAGIC boostermeds.cov_booster_meds_cocp AS cov_meds_cocp,
+# MAGIC boostermeds.cov_booster_meds_hrt AS cov_meds_hrt,
+# MAGIC cv_cev_input.cv_cev_stat AS cov_cv_cev
+# MAGIC
+# MAGIC FROM dsa_391419_j3w9t_collab.ccu002_06_cohort_booster_cov_main_3mil_nv AS boostermain
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_cohort_booster_cov_meds_3mil_nv AS boostermeds ON (boostermain.NHS_NUMBER_DEID=boostermeds.NHS_NUMBER_DEID)
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_exclusion_cohort_spine_output_3mil_nv AS spineinput ON (boostermain.NHS_NUMBER_DEID=spineinput.NHS_NUMBER_DEID)
+# MAGIC LEFT JOIN ccu002_06_d15_cv_cev_neither_out_flag AS cv_cev_input ON (boostermain.NHS_NUMBER_DEID=cv_cev_input.NHS_NUMBER_DEID)
+# MAGIC WHERE (spineinput.cov_booster_age IS NOT NULL AND spineinput.vaccination_dose1_product IS NOT NULL AND spineinput.vaccination_dose2_product IS NOT NULL AND (spineinput.vaccination_dose1_product=spineinput.vaccination_dose2_product))
+
+# COMMAND ----------
+
+# MAGIC %md ## Subset by vaccination product 
+
+# COMMAND ----------
+
+# MAGIC %md ### Dose 1 
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_dose1_azcov_input AS SELECT * FROM ccu002_06_table1_dose1cov_input WHERE (dose1_product="AstraZeneca" AND dose1_date IS NOT NULL AND (DATE_DIFF(dose1_date,'2020-12-08')<=(26*7)))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_dose1_pfcov_input AS SELECT * FROM ccu002_06_table1_dose1cov_input WHERE (dose1_product="Pfizer" AND dose1_date IS NOT NULL AND (DATE_DIFF(dose1_date,'2020-12-08')<=(26*7)))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_dose1_modcov_input AS SELECT * FROM ccu002_06_table1_dose1cov_input WHERE (dose1_product="Moderna" AND dose1_date IS NOT NULL AND (DATE_DIFF(dose1_date,'2020-12-08')<=(26*7)))
+
+# COMMAND ----------
+
+# MAGIC %md ### Dose 2
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_dose2_azcov_input AS SELECT * FROM ccu002_06_table1_dose2cov_input WHERE (dose1_product="AstraZeneca" AND dose2_product="AstraZeneca" AND dose1_date IS NOT NULL AND dose2_date IS NOT NULL AND (DATE_DIFF(dose2_date,dose1_date)<=(26*7)))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_dose2_pfcov_input AS SELECT * FROM ccu002_06_table1_dose2cov_input WHERE (dose1_product="Pfizer" AND dose2_product="Pfizer" AND dose1_date IS NOT NULL AND dose2_date IS NOT NULL AND (DATE_DIFF(dose2_date,dose1_date)<=(26*7)))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_dose2_modcov_input AS SELECT * FROM ccu002_06_table1_dose2cov_input WHERE (dose1_product="Moderna" AND dose2_product="Moderna" AND dose1_date IS NOT NULL AND dose2_date IS NOT NULL AND (DATE_DIFF(dose2_date,dose1_date)<=(26*7)))
+
+# COMMAND ----------
+
+# MAGIC %md ### Booster
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC --YF modified: Astrazeneca to AstraZeneca
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_booster_pfcov_input AS SELECT * FROM ccu002_06_table1_boostercov_input WHERE (((dose1_product="AstraZeneca" AND dose2_product="AstraZeneca") OR (dose1_product="Pfizer" AND dose2_product="Pfizer") OR (dose1_product="Moderna" AND dose2_product="Moderna")) AND booster_product="Pfizer" AND dose1_date IS NOT NULL AND dose2_date IS NOT NULL AND booster_date IS NOT NULL AND (DATE_DIFF(booster_date,dose2_date)<=(26*7)))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC --YF modified: Astrazeneca to AstraZeneca
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_booster_modcov_input AS SELECT * FROM ccu002_06_table1_boostercov_input WHERE (((dose1_product="AstraZeneca" AND dose2_product="AstraZeneca") OR (dose1_product="Pfizer" AND dose2_product="Pfizer") OR (dose1_product="Moderna" AND dose2_product="Moderna")) AND booster_product="Moderna" AND dose1_date IS NOT NULL AND dose2_date IS NOT NULL AND booster_date IS NOT NULL AND (DATE_DIFF(booster_date,dose2_date)<=(26*7)))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC --YF added this cell---Teri forgot make view for AstraZenca
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_booster_azcov_input AS SELECT * FROM ccu002_06_table1_boostercov_input WHERE (((dose1_product="AstraZeneca" AND dose2_product="AstraZeneca") OR (dose1_product="Pfizer" AND dose2_product="Pfizer") OR (dose1_product="Moderna" AND dose2_product="Moderna")) AND booster_product="AstraZeneca" AND dose1_date IS NOT NULL AND dose2_date IS NOT NULL AND booster_date IS NOT NULL AND (DATE_DIFF(booster_date,dose2_date)<=(26*7)))
+
+# COMMAND ----------
+
+# MAGIC %md ## Extract counts 
+
+# COMMAND ----------
+
+table = "' AS category, COUNT(NHS_NUMBER_DEID) AS N, SUM(CASE WHEN cov_sex=1 THEN 1 ELSE 0 END) AS Sex_Male, SUM(CASE WHEN cov_sex=2 THEN 1 ELSE 0 END) AS Sex_Female, SUM(CASE WHEN cov_age>=18 AND cov_age<30 THEN 1 ELSE 0 END) AS Age_18_29, SUM(CASE WHEN cov_age>=30 AND cov_age<40 THEN 1 ELSE 0 END) AS Age_30_39, SUM(CASE WHEN cov_age>=40 AND cov_age<50 THEN 1 ELSE 0 END) AS Age_40_49, SUM(CASE WHEN cov_age>=50 AND cov_age<60 THEN 1 ELSE 0 END) AS Age_50_59, SUM(CASE WHEN cov_age>=60 AND cov_age<70 THEN 1 ELSE 0 END) AS Age_60_69, SUM(CASE WHEN cov_age>=70 AND cov_age<80 THEN 1 ELSE 0 END) AS Age_70_79, SUM(CASE WHEN cov_age>=80 AND cov_age<90 THEN 1 ELSE 0 END) AS Age_80_89, SUM(CASE WHEN cov_age>=90 THEN 1 ELSE 0 END) AS Age_90plus, SUM(CASE WHEN cov_ethnicity='Asian or Asian British' THEN 1 ELSE 0 END) AS Ethnicity_Asian, SUM(CASE WHEN cov_ethnicity='Black or Black British' THEN 1 ELSE 0 END) AS Ethnicity_Black, SUM(CASE WHEN cov_ethnicity='Mixed' THEN 1 ELSE 0 END) AS Ethnicity_Mixed, SUM(CASE WHEN cov_ethnicity='Other Ethnic Groups' THEN 1 ELSE 0 END) AS Ethnicity_Other, SUM(CASE WHEN cov_ethnicity='White' THEN 1 ELSE 0 END) AS Ethnicity_White, SUM(CASE WHEN cov_ethnicity='Unknown' THEN 1 ELSE 0 END) AS Ethnicity_Unknown, SUM(CASE WHEN cov_ethnicity='missing' THEN 1 ELSE 0 END) AS Ethnicity_Missing, SUM(CASE WHEN cov_deprivation='Deciles_1_2' THEN 1 ELSE 0 END) AS Deprivation_1_2, SUM(CASE WHEN cov_deprivation='Deciles_3_4' THEN 1 ELSE 0 END) AS Deprivation_3_4, SUM(CASE WHEN cov_deprivation='Deciles_5_6' THEN 1 ELSE 0 END) AS Deprivation_5_6, SUM(CASE WHEN cov_deprivation='Deciles_7_8' THEN 1 ELSE 0 END) AS Deprivation_7_8, SUM(CASE WHEN cov_deprivation='Deciles_9_10' THEN 1 ELSE 0 END) AS Deprivation_9_10, SUM(CASE WHEN cov_deprivation IS NULL THEN 1 ELSE 0 END) AS Deprivation_Missing, SUM(CASE WHEN cov_smoking_status='Current-smoker' THEN 1 ELSE 0 END) AS SmokingStatus_Current, SUM(CASE WHEN cov_smoking_status='Ex-smoker' THEN 1 ELSE 0 END) AS SmokingStatus_Former, SUM(CASE WHEN cov_smoking_status='Never-smoker' THEN 1 ELSE 0 END) AS SmokingStatus_Never, SUM(CASE WHEN cov_smoking_status='missing' THEN 1 ELSE 0 END) AS SmokingStatus_Missing, SUM(CASE WHEN cov_ami=1 THEN 1 ELSE 0 END) AS MedicalHistory_AMI, SUM(CASE WHEN cov_diabetes=1 THEN 1 ELSE 0 END) AS MedicalHistory_Diabetes, SUM(CASE WHEN cov_depression=1 THEN 1 ELSE 0 END) AS MedicalHistory_Depression, SUM(CASE WHEN cov_bmi_obesity=1 THEN 1 ELSE 0 END) AS MedicalHistory_BMI_Obesity, SUM(CASE WHEN cov_cancer=1 THEN 1 ELSE 0 END) AS MedicalHistory_Cancer, SUM(CASE WHEN cov_copd=1 THEN 1 ELSE 0 END) AS MedicalHistory_COPD, SUM(CASE WHEN cov_liver_disease=1 THEN 1 ELSE 0 END) AS MedicalHistory_LiverDisease, SUM(CASE WHEN cov_ckd=1 THEN 1 ELSE 0 END) AS MedicalHistory_ChronicKidneyDisease, SUM(CASE WHEN cov_dementia=1 THEN 1 ELSE 0 END) AS  MedicalHistory_Dementia, SUM(CASE WHEN cov_stroke_all=1 THEN 1 ELSE 0 END) AS MedicalHistory_Stroke_All, SUM(CASE WHEN cov_all_vte=1 THEN 1 ELSE 0 END) AS MedicalHistory_All_VTE, SUM(CASE WHEN cov_thrombophilia=1 THEN 1 ELSE 0 END) AS MedicalHistory_Thrombophilia, SUM(CASE WHEN cov_surgery_last_yr=1 THEN 1 ELSE 0 END) AS MajorSurgery_LastYr, SUM(CASE WHEN cov_n_disorders=0 THEN 1 ELSE 0 END) AS NumberOfUniqueDiseasesLastYr_0, SUM(CASE WHEN cov_n_disorders>=1 AND cov_n_disorders<6 THEN 1 ELSE 0 END) AS NumberOfUniqueDiseasesLastYr_1_5, SUM(CASE WHEN cov_n_disorders>=6 THEN 1 ELSE 0 END) AS NumberOfUniqueDiseasesLastYr_6plus, SUM(CASE WHEN cov_region='North West' THEN 1 ELSE 0 END) AS Region_North_West, SUM(CASE WHEN cov_region='South East' THEN 1 ELSE 0 END) AS Region_South_East, SUM(CASE WHEN cov_region='London' THEN 1 ELSE 0 END) AS Region_London, SUM(CASE WHEN cov_region='East of England' THEN 1 ELSE 0 END) AS Region_EastOfEngland, SUM(CASE WHEN cov_region='South West' THEN 1 ELSE 0 END) AS Region_SouthWest, SUM(CASE WHEN cov_region IS NULL THEN 1 ELSE 0 END) AS Region_Missing, SUM(CASE WHEN cov_region='Yorkshire and The Humber' THEN 1 ELSE 0 END) AS Region_Yorkshire_and_TheHumber, SUM(CASE WHEN cov_region='East Midlands' THEN 1 ELSE 0 END) AS Region_EastMidlands, SUM(CASE WHEN cov_region='West Midlands' THEN 1 ELSE 0 END) AS Region_WestMidlands, SUM(CASE WHEN cov_region='North East' THEN 1 ELSE 0 END) AS Region_NorthEast, SUM(CASE WHEN cov_prior_covid19=1 THEN 1 ELSE 0 END) AS Prior_covid19, SUM(CASE WHEN cov_meds_antiplatelet=1 THEN 1 ELSE 0 END) AS Meds_Last_3mo_Antiplatelet, SUM(CASE WHEN cov_meds_bp_lowering=1 THEN 1 ELSE 0 END) AS Meds_Last_3mo_BP_Lowering, SUM(CASE WHEN cov_meds_lipid_lowering=1 THEN 1 ELSE 0 END) AS Meds_Last_3mo_Lipid_Lowering, SUM(CASE WHEN cov_meds_anticoagulant=1 THEN 1 ELSE 0 END) AS Meds_Last_3mo_Anticoagulant, SUM(CASE WHEN cov_meds_cocp=1 THEN 1 ELSE 0 END) AS Meds_Last_3mo_COCP, SUM(CASE WHEN cov_meds_hrt=1 THEN 1 ELSE 0 END) AS Meds_Last_3mo_HRT, SUM(CASE WHEN cov_cv_cev='cv' THEN 1 ELSE 0 END) AS CV, SUM(CASE WHEN cov_cv_cev='cev' THEN 1 ELSE 0 END) AS CEV, SUM(CASE WHEN cov_cv_cev='neither' THEN 1 ELSE 0 END) AS neither_cv_cev FROM ccu002_06_table1_"
+# YL add booster_az
+for data in ["dose1","dose2","booster","dose1_az","dose1_pf","dose1_mod","dose2_az","dose2_pf","dose2_mod","booster_az","booster_pf","booster_mod"]:
+  sql("CREATE OR REPLACE TEMP VIEW t1_" + data + " AS SELECT '" + data + table + data + "cov_input")
+
+# COMMAND ----------
+
+# MAGIC %md ## Join together to make one table for doses 1, 2 and booster
+
+# COMMAND ----------
+
+# MAGIC %md ### Dose 1 
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_3mil_nv_dose1 AS 
+# MAGIC SELECT * FROM t1_dose1
+# MAGIC UNION ALL
+# MAGIC SELECT * FROM t1_dose1_az
+# MAGIC UNION ALL
+# MAGIC SELECT * FROM t1_dose1_pf
+# MAGIC UNION ALL
+# MAGIC SELECT * FROM t1_dose1_mod
+
+# COMMAND ----------
+
+# MAGIC %md ### Dose 2
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_3mil_nv_dose2 AS 
+# MAGIC SELECT * FROM t1_dose2
+# MAGIC UNION ALL
+# MAGIC SELECT * FROM t1_dose2_az
+# MAGIC UNION ALL
+# MAGIC SELECT * FROM t1_dose2_pf
+# MAGIC UNION ALL
+# MAGIC SELECT * FROM t1_dose2_mod
+
+# COMMAND ----------
+
+# MAGIC %md ### Booster
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_table1_3mil_nv_booster AS 
+# MAGIC SELECT * FROM t1_booster
+# MAGIC UNION ALL
+# MAGIC SELECT * FROM t1_booster_az
+# MAGIC UNION ALL
+# MAGIC SELECT * FROM t1_booster_pf
+# MAGIC UNION ALL
+# MAGIC SELECT * FROM t1_booster_mod
+
+# COMMAND ----------
+
+# MAGIC %md ## Save final tables
+
+# COMMAND ----------
+
+drop_create_table('ccu002_06_table1_3mil_nv_dose1')
+
+# COMMAND ----------
+
+drop_create_table('ccu002_06_table1_3mil_nv_dose2')
+
+# COMMAND ----------
+
+drop_create_table('ccu002_06_table1_3mil_nv_booster')
+
+# COMMAND ----------
+
+# MAGIC %md ## Export 
+
+# COMMAND ----------
+
+# MAGIC %md ### Dose 1
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM dsa_391419_j3w9t_collab.ccu002_06_table1_3mil_nv_dose1
+# MAGIC
+# MAGIC --this is a data characterization table to decribe the cohort to be analysed (dose 1)
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW Dose1 AS
+# MAGIC SELECT 
+# MAGIC category,
+# MAGIC ROUND(N/5,0)*5 AS N,
+# MAGIC ROUND(Sex_Male/5,0)*5 AS Sex_Male,
+# MAGIC ROUND(Sex_Female/5,0)*5 AS Sex_Female,
+# MAGIC ROUND(Age_18_29/5,0)*5 AS Age_18_29,
+# MAGIC ROUND(Age_30_39/5,0)*5 AS Age_30_39,
+# MAGIC ROUND(Age_40_49/5,0)*5 AS Age_40_49,
+# MAGIC ROUND(Age_50_59/5,0)*5 AS Age_50_59,
+# MAGIC ROUND(Age_60_69/5,0)*5 AS Age_60_69,
+# MAGIC ROUND(Age_70_79/5,0)*5 AS Age_70_79,
+# MAGIC ROUND(Age_80_89/5,0)*5 AS Age_80_89,
+# MAGIC ROUND(Age_90plus/5,0)*5 AS Age_90plus,
+# MAGIC ROUND(Ethnicity_Asian/5,0)*5 AS Ethnicity_Asian,
+# MAGIC ROUND(Ethnicity_Black/5,0)*5 AS Ethnicity_Black,
+# MAGIC ROUND(Ethnicity_Mixed/5,0)*5 AS Ethnicity_Mixed,
+# MAGIC ROUND(Ethnicity_Other/5,0)*5 AS Ethnicity_Other,
+# MAGIC ROUND(Ethnicity_White/5,0)*5 AS Ethnicity_White,
+# MAGIC ROUND(Ethnicity_Unknown/5,0)*5 AS Ethnicity_Unknown,
+# MAGIC ROUND(Ethnicity_Missing/5,0)*5 AS Ethnicity_Missing,
+# MAGIC ROUND(Deprivation_1_2/5,0)*5 AS Deprivation_1_2,
+# MAGIC ROUND(Deprivation_3_4/5,0)*5 AS Deprivation_3_4,
+# MAGIC ROUND(Deprivation_5_6/5,0)*5 AS Deprivation_5_6,
+# MAGIC ROUND(Deprivation_7_8/5,0)*5 AS Deprivation_7_8,
+# MAGIC ROUND(Deprivation_9_10/5,0)*5 AS Deprivation_9_10,
+# MAGIC ROUND(Deprivation_Missing/5,0)*5 AS Deprivation_Missing,
+# MAGIC ROUND(SmokingStatus_Current/5,0)*5 AS SmokingStatus_Current,
+# MAGIC ROUND(SmokingStatus_Former/5,0)*5 AS SmokingStatus_Former,
+# MAGIC ROUND(SmokingStatus_Never/5,0)*5 AS SmokingStatus_Never,
+# MAGIC ROUND(SmokingStatus_Missing/5,0)*5 AS SmokingStatus_Missing,
+# MAGIC ROUND(MedicalHistory_AMI/5,0)*5 AS MedicalHistory_AMI,
+# MAGIC ROUND(MedicalHistory_Diabetes/5,0)*5 AS MedicalHistory_Diabetes,
+# MAGIC ROUND(MedicalHistory_Depression/5,0)*5 AS MedicalHistory_Depression,
+# MAGIC ROUND(MedicalHistory_BMI_Obesity/5,0)*5 AS MedicalHistory_BMI_Obesity,
+# MAGIC ROUND(MedicalHistory_Cancer/5,0)*5 AS MedicalHistory_Cancer,
+# MAGIC ROUND(MedicalHistory_COPD/5,0)*5 AS MedicalHistory_COPD,
+# MAGIC ROUND(MedicalHistory_LiverDisease/5,0)*5 AS MedicalHistory_LiverDisease,
+# MAGIC ROUND(MedicalHistory_ChronicKidneyDisease/5,0)*5 AS MedicalHistory_ChronicKidneyDisease,
+# MAGIC ROUND(MedicalHistory_Dementia/5,0)*5 AS MedicalHistory_Dementia,
+# MAGIC ROUND(MedicalHistory_Stroke_All/5,0)*5 AS MedicalHistory_Stroke_All,
+# MAGIC ROUND(MedicalHistory_All_VTE/5,0)*5 AS MedicalHistory_All_VTE,
+# MAGIC ROUND(MedicalHistory_Thrombophilia/5,0)*5 AS MedicalHistory_Thrombophilia,
+# MAGIC ROUND(MajorSurgery_LastYr/5,0)*5 AS MajorSurgery_LastYr,
+# MAGIC ROUND(NumberOfUniqueDiseasesLastYr_0/5,0)*5 AS NumberOfUniqueDiseasesLastYr_0,
+# MAGIC ROUND(NumberOfUniqueDiseasesLastYr_1_5/5,0)*5 AS NumberOfUniqueDiseasesLastYr_1_5,
+# MAGIC ROUND(NumberOfUniqueDiseasesLastYr_6plus/5,0)*5 AS NumberOfUniqueDiseasesLastYr_6plus,
+# MAGIC ROUND(Region_North_West/5,0)*5 AS Region_North_West,
+# MAGIC ROUND(Region_South_East/5,0)*5 AS Region_South_East,
+# MAGIC ROUND(Region_London/5,0)*5 AS Region_London,
+# MAGIC ROUND(Region_EastOfEngland/5,0)*5 AS Region_EastOfEngland,
+# MAGIC ROUND(Region_SouthWest/5,0)*5 AS Region_SouthWest,
+# MAGIC ROUND(Region_Missing/5,0)*5 AS Region_Missing,
+# MAGIC ROUND(Region_Yorkshire_and_TheHumber/5,0)*5 AS Region_Yorkshire_and_TheHumber,
+# MAGIC ROUND(Region_EastMidlands/5,0)*5 AS Region_EastMidlands,
+# MAGIC ROUND(Region_WestMidlands/5,0)*5 AS Region_WestMidlands,
+# MAGIC ROUND(Region_NorthEast/5,0)*5 AS Region_NorthEast,
+# MAGIC ROUND(Prior_covid19/5,0)*5 AS Prior_covid19,
+# MAGIC ROUND(Meds_Last_3mo_Antiplatelet/5,0)*5 AS Meds_Last_3mo_Antiplatelet,
+# MAGIC ROUND(Meds_Last_3mo_BP_Lowering/5,0)*5 AS Meds_Last_3mo_BP_Lowering,
+# MAGIC ROUND(Meds_Last_3mo_Lipid_Lowering/5,0)*5 AS Meds_Last_3mo_Lipid_Lowering,
+# MAGIC ROUND(Meds_Last_3mo_Anticoagulant/5,0)*5 AS Meds_Last_3mo_Anticoagulant,
+# MAGIC ROUND(Meds_Last_3mo_COCP/5,0)*5 AS Meds_Last_3mo_COCP,
+# MAGIC ROUND(Meds_Last_3mo_HRT/5,0)*5 AS Meds_Last_3mo_HRT,
+# MAGIC ROUND(CV/5,0)*5 AS Clinically_vulnerable,
+# MAGIC ROUND(CEV/5,0)*5 AS Clinically_ext_vulnerable,
+# MAGIC ROUND(neither_cv_cev/5,0)*5 AS Neither_cv_cev
+# MAGIC FROM dsa_391419_j3w9t_collab.ccu002_06_table1_3mil_nv_dose1
+# MAGIC
+# MAGIC --table 1 data characterisation (dose 1) with counts rounded to nearest 5
+
+# COMMAND ----------
+
+from pyspark.sql import functions as F
+dose1=spark.table("dose1")
+dose1=dose1.toPandas()
+dose1.set_index('category', inplace=True)
+dose1.loc['other'] = dose1.loc['dose1'] - dose1.drop('dose1').sum()
+dose1
+
+
+
+
+# COMMAND ----------
+
+dose1=dose1.reset_index()
+dose1=dose1.T
+
+# COMMAND ----------
+
+
+df = dose1.drop(dose1.index[0])
+spark_df = spark.createDataFrame(df)
+spark_df.createOrReplaceTempView("my_view")
+
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM my_view
+
+# COMMAND ----------
+
+# MAGIC %md ### Dose 2
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM dsa_391419_j3w9t_collab.ccu002_06_table1_3mil_nv_dose2
+# MAGIC
+# MAGIC --this is a data characterization table to decribe the cohort to be analysed (dose 2)
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW dose2 AS
+# MAGIC SELECT 
+# MAGIC category,
+# MAGIC ROUND(N/5,0)*5 AS N,
+# MAGIC ROUND(Sex_Male/5,0)*5 AS Sex_Male,
+# MAGIC ROUND(Sex_Female/5,0)*5 AS Sex_Female,
+# MAGIC ROUND(Age_18_29/5,0)*5 AS Age_18_29,
+# MAGIC ROUND(Age_30_39/5,0)*5 AS Age_30_39,
+# MAGIC ROUND(Age_40_49/5,0)*5 AS Age_40_49,
+# MAGIC ROUND(Age_50_59/5,0)*5 AS Age_50_59,
+# MAGIC ROUND(Age_60_69/5,0)*5 AS Age_60_69,
+# MAGIC ROUND(Age_70_79/5,0)*5 AS Age_70_79,
+# MAGIC ROUND(Age_80_89/5,0)*5 AS Age_80_89,
+# MAGIC ROUND(Age_90plus/5,0)*5 AS Age_90plus,
+# MAGIC ROUND(Ethnicity_Asian/5,0)*5 AS Ethnicity_Asian,
+# MAGIC ROUND(Ethnicity_Black/5,0)*5 AS Ethnicity_Black,
+# MAGIC ROUND(Ethnicity_Mixed/5,0)*5 AS Ethnicity_Mixed,
+# MAGIC ROUND(Ethnicity_Other/5,0)*5 AS Ethnicity_Other,
+# MAGIC ROUND(Ethnicity_White/5,0)*5 AS Ethnicity_White,
+# MAGIC ROUND(Ethnicity_Unknown/5,0)*5 AS Ethnicity_Unknown,
+# MAGIC ROUND(Ethnicity_Missing/5,0)*5 AS Ethnicity_Missing,
+# MAGIC ROUND(Deprivation_1_2/5,0)*5 AS Deprivation_1_2,
+# MAGIC ROUND(Deprivation_3_4/5,0)*5 AS Deprivation_3_4,
+# MAGIC ROUND(Deprivation_5_6/5,0)*5 AS Deprivation_5_6,
+# MAGIC ROUND(Deprivation_7_8/5,0)*5 AS Deprivation_7_8,
+# MAGIC ROUND(Deprivation_9_10/5,0)*5 AS Deprivation_9_10,
+# MAGIC ROUND(Deprivation_Missing/5,0)*5 AS Deprivation_Missing,
+# MAGIC ROUND(SmokingStatus_Current/5,0)*5 AS SmokingStatus_Current,
+# MAGIC ROUND(SmokingStatus_Former/5,0)*5 AS SmokingStatus_Former,
+# MAGIC ROUND(SmokingStatus_Never/5,0)*5 AS SmokingStatus_Never,
+# MAGIC ROUND(SmokingStatus_Missing/5,0)*5 AS SmokingStatus_Missing,
+# MAGIC ROUND(MedicalHistory_AMI/5,0)*5 AS MedicalHistory_AMI,
+# MAGIC ROUND(MedicalHistory_Diabetes/5,0)*5 AS MedicalHistory_Diabetes,
+# MAGIC ROUND(MedicalHistory_Depression/5,0)*5 AS MedicalHistory_Depression,
+# MAGIC ROUND(MedicalHistory_BMI_Obesity/5,0)*5 AS MedicalHistory_BMI_Obesity,
+# MAGIC ROUND(MedicalHistory_Cancer/5,0)*5 AS MedicalHistory_Cancer,
+# MAGIC ROUND(MedicalHistory_COPD/5,0)*5 AS MedicalHistory_COPD,
+# MAGIC ROUND(MedicalHistory_LiverDisease/5,0)*5 AS MedicalHistory_LiverDisease,
+# MAGIC ROUND(MedicalHistory_ChronicKidneyDisease/5,0)*5 AS MedicalHistory_ChronicKidneyDisease,
+# MAGIC ROUND(MedicalHistory_Dementia/5,0)*5 AS MedicalHistory_Dementia,
+# MAGIC ROUND(MedicalHistory_Stroke_All/5,0)*5 AS MedicalHistory_Stroke_All,
+# MAGIC ROUND(MedicalHistory_All_VTE/5,0)*5 AS MedicalHistory_All_VTE,
+# MAGIC ROUND(MedicalHistory_Thrombophilia/5,0)*5 AS MedicalHistory_Thrombophilia,
+# MAGIC ROUND(MajorSurgery_LastYr/5,0)*5 AS MajorSurgery_LastYr,
+# MAGIC ROUND(NumberOfUniqueDiseasesLastYr_0/5,0)*5 AS NumberOfUniqueDiseasesLastYr_0,
+# MAGIC ROUND(NumberOfUniqueDiseasesLastYr_1_5/5,0)*5 AS NumberOfUniqueDiseasesLastYr_1_5,
+# MAGIC ROUND(NumberOfUniqueDiseasesLastYr_6plus/5,0)*5 AS NumberOfUniqueDiseasesLastYr_6plus,
+# MAGIC ROUND(Region_North_West/5,0)*5 AS Region_North_West,
+# MAGIC ROUND(Region_South_East/5,0)*5 AS Region_South_East,
+# MAGIC ROUND(Region_London/5,0)*5 AS Region_London,
+# MAGIC ROUND(Region_EastOfEngland/5,0)*5 AS Region_EastOfEngland,
+# MAGIC ROUND(Region_SouthWest/5,0)*5 AS Region_SouthWest,
+# MAGIC ROUND(Region_Missing/5,0)*5 AS Region_Missing,
+# MAGIC ROUND(Region_Yorkshire_and_TheHumber/5,0)*5 AS Region_Yorkshire_and_TheHumber,
+# MAGIC ROUND(Region_EastMidlands/5,0)*5 AS Region_EastMidlands,
+# MAGIC ROUND(Region_WestMidlands/5,0)*5 AS Region_WestMidlands,
+# MAGIC ROUND(Region_NorthEast/5,0)*5 AS Region_NorthEast,
+# MAGIC ROUND(Prior_covid19/5,0)*5 AS Prior_covid19,
+# MAGIC ROUND(Meds_Last_3mo_Antiplatelet/5,0)*5 AS Meds_Last_3mo_Antiplatelet,
+# MAGIC ROUND(Meds_Last_3mo_BP_Lowering/5,0)*5 AS Meds_Last_3mo_BP_Lowering,
+# MAGIC ROUND(Meds_Last_3mo_Lipid_Lowering/5,0)*5 AS Meds_Last_3mo_Lipid_Lowering,
+# MAGIC ROUND(Meds_Last_3mo_Anticoagulant/5,0)*5 AS Meds_Last_3mo_Anticoagulant,
+# MAGIC ROUND(Meds_Last_3mo_COCP/5,0)*5 AS Meds_Last_3mo_COCP,
+# MAGIC ROUND(Meds_Last_3mo_HRT/5,0)*5 AS Meds_Last_3mo_HRT,
+# MAGIC ROUND(CV/5,0)*5 AS Clinically_vulnerable,
+# MAGIC ROUND(CEV/5,0)*5 AS Clinically_ext_vulnerable,
+# MAGIC ROUND(neither_cv_cev/5,0)*5 AS Neither_cv_cev
+# MAGIC FROM dsa_391419_j3w9t_collab.ccu002_06_table1_3mil_nv_dose2
+# MAGIC
+# MAGIC --table 1 data characterisation (dose 2) with counts rounded to nearest 5
+
+# COMMAND ----------
+
+
+dose2=spark.table("dose2")
+dose2=dose2.toPandas()
+dose2.set_index('category', inplace=True)
+dose2.loc['other'] = dose2.loc['dose2'] - dose2.drop('dose2').sum()
+dose2
+
+# COMMAND ----------
+
+# MAGIC %md ### Booster
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM dsa_391419_j3w9t_collab.ccu002_06_table1_3mil_nv_booster
+# MAGIC
+# MAGIC --this is a data characterization table to decribe the cohort to be analysed (booster)
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW booster AS
+# MAGIC SELECT 
+# MAGIC category,
+# MAGIC ROUND(N/5,0)*5 AS N,
+# MAGIC ROUND(Sex_Male/5,0)*5 AS Sex_Male,
+# MAGIC ROUND(Sex_Female/5,0)*5 AS Sex_Female,
+# MAGIC ROUND(Age_18_29/5,0)*5 AS Age_18_29,
+# MAGIC ROUND(Age_30_39/5,0)*5 AS Age_30_39,
+# MAGIC ROUND(Age_40_49/5,0)*5 AS Age_40_49,
+# MAGIC ROUND(Age_50_59/5,0)*5 AS Age_50_59,
+# MAGIC ROUND(Age_60_69/5,0)*5 AS Age_60_69,
+# MAGIC ROUND(Age_70_79/5,0)*5 AS Age_70_79,
+# MAGIC ROUND(Age_80_89/5,0)*5 AS Age_80_89,
+# MAGIC ROUND(Age_90plus/5,0)*5 AS Age_90plus,
+# MAGIC ROUND(Ethnicity_Asian/5,0)*5 AS Ethnicity_Asian,
+# MAGIC ROUND(Ethnicity_Black/5,0)*5 AS Ethnicity_Black,
+# MAGIC ROUND(Ethnicity_Mixed/5,0)*5 AS Ethnicity_Mixed,
+# MAGIC ROUND(Ethnicity_Other/5,0)*5 AS Ethnicity_Other,
+# MAGIC ROUND(Ethnicity_White/5,0)*5 AS Ethnicity_White,
+# MAGIC ROUND(Ethnicity_Unknown/5,0)*5 AS Ethnicity_Unknown,
+# MAGIC ROUND(Ethnicity_Missing/5,0)*5 AS Ethnicity_Missing,
+# MAGIC ROUND(Deprivation_1_2/5,0)*5 AS Deprivation_1_2,
+# MAGIC ROUND(Deprivation_3_4/5,0)*5 AS Deprivation_3_4,
+# MAGIC ROUND(Deprivation_5_6/5,0)*5 AS Deprivation_5_6,
+# MAGIC ROUND(Deprivation_7_8/5,0)*5 AS Deprivation_7_8,
+# MAGIC ROUND(Deprivation_9_10/5,0)*5 AS Deprivation_9_10,
+# MAGIC ROUND(Deprivation_Missing/5,0)*5 AS Deprivation_Missing,
+# MAGIC ROUND(SmokingStatus_Current/5,0)*5 AS SmokingStatus_Current,
+# MAGIC ROUND(SmokingStatus_Former/5,0)*5 AS SmokingStatus_Former,
+# MAGIC ROUND(SmokingStatus_Never/5,0)*5 AS SmokingStatus_Never,
+# MAGIC ROUND(SmokingStatus_Missing/5,0)*5 AS SmokingStatus_Missing,
+# MAGIC ROUND(MedicalHistory_AMI/5,0)*5 AS MedicalHistory_AMI,
+# MAGIC ROUND(MedicalHistory_Diabetes/5,0)*5 AS MedicalHistory_Diabetes,
+# MAGIC ROUND(MedicalHistory_Depression/5,0)*5 AS MedicalHistory_Depression,
+# MAGIC ROUND(MedicalHistory_BMI_Obesity/5,0)*5 AS MedicalHistory_BMI_Obesity,
+# MAGIC ROUND(MedicalHistory_Cancer/5,0)*5 AS MedicalHistory_Cancer,
+# MAGIC ROUND(MedicalHistory_COPD/5,0)*5 AS MedicalHistory_COPD,
+# MAGIC ROUND(MedicalHistory_LiverDisease/5,0)*5 AS MedicalHistory_LiverDisease,
+# MAGIC ROUND(MedicalHistory_ChronicKidneyDisease/5,0)*5 AS MedicalHistory_ChronicKidneyDisease,
+# MAGIC ROUND(MedicalHistory_Dementia/5,0)*5 AS MedicalHistory_Dementia,
+# MAGIC ROUND(MedicalHistory_Stroke_All/5,0)*5 AS MedicalHistory_Stroke_All,
+# MAGIC ROUND(MedicalHistory_All_VTE/5,0)*5 AS MedicalHistory_All_VTE,
+# MAGIC ROUND(MedicalHistory_Thrombophilia/5,0)*5 AS MedicalHistory_Thrombophilia,
+# MAGIC ROUND(MajorSurgery_LastYr/5,0)*5 AS MajorSurgery_LastYr,
+# MAGIC ROUND(NumberOfUniqueDiseasesLastYr_0/5,0)*5 AS NumberOfUniqueDiseasesLastYr_0,
+# MAGIC ROUND(NumberOfUniqueDiseasesLastYr_1_5/5,0)*5 AS NumberOfUniqueDiseasesLastYr_1_5,
+# MAGIC ROUND(NumberOfUniqueDiseasesLastYr_6plus/5,0)*5 AS NumberOfUniqueDiseasesLastYr_6plus,
+# MAGIC ROUND(Region_North_West/5,0)*5 AS Region_North_West,
+# MAGIC ROUND(Region_South_East/5,0)*5 AS Region_South_East,
+# MAGIC ROUND(Region_London/5,0)*5 AS Region_London,
+# MAGIC ROUND(Region_EastOfEngland/5,0)*5 AS Region_EastOfEngland,
+# MAGIC ROUND(Region_SouthWest/5,0)*5 AS Region_SouthWest,
+# MAGIC ROUND(Region_Missing/5,0)*5 AS Region_Missing,
+# MAGIC ROUND(Region_Yorkshire_and_TheHumber/5,0)*5 AS Region_Yorkshire_and_TheHumber,
+# MAGIC ROUND(Region_EastMidlands/5,0)*5 AS Region_EastMidlands,
+# MAGIC ROUND(Region_WestMidlands/5,0)*5 AS Region_WestMidlands,
+# MAGIC ROUND(Region_NorthEast/5,0)*5 AS Region_NorthEast,
+# MAGIC ROUND(Prior_covid19/5,0)*5 AS Prior_covid19,
+# MAGIC ROUND(Meds_Last_3mo_Antiplatelet/5,0)*5 AS Meds_Last_3mo_Antiplatelet,
+# MAGIC ROUND(Meds_Last_3mo_BP_Lowering/5,0)*5 AS Meds_Last_3mo_BP_Lowering,
+# MAGIC ROUND(Meds_Last_3mo_Lipid_Lowering/5,0)*5 AS Meds_Last_3mo_Lipid_Lowering,
+# MAGIC ROUND(Meds_Last_3mo_Anticoagulant/5,0)*5 AS Meds_Last_3mo_Anticoagulant,
+# MAGIC ROUND(Meds_Last_3mo_COCP/5,0)*5 AS Meds_Last_3mo_COCP,
+# MAGIC ROUND(Meds_Last_3mo_HRT/5,0)*5 AS Meds_Last_3mo_HRT,
+# MAGIC ROUND(CV/5,0)*5 AS Clinically_vulnerable,
+# MAGIC ROUND(CEV/5,0)*5 AS Clinically_ext_vulnerable,
+# MAGIC ROUND(neither_cv_cev/5,0)*5 AS Neither_cv_cev
+# MAGIC FROM dsa_391419_j3w9t_collab.ccu002_06_table1_3mil_nv_booster
+# MAGIC
+# MAGIC --table 1 data characterisation (booster) with counts rounded to nearest 5
+
+# COMMAND ----------
+
+booster=spark.table("booster")
+booster=booster.toPandas()
+booster.set_index('category', inplace=True)
+booster.loc['other'] = booster.loc['booster'] - booster.drop('booster').sum()
+booster
+
+# COMMAND ----------
+
