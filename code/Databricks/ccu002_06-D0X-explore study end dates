@@ -1,0 +1,164 @@
+# Databricks notebook source
+# MAGIC %md  # ccu002_06-D0X-explore study end dates
+# MAGIC
+# MAGIC **Description** There's no official study end date yet, imma exploring
+# MAGIC
+# MAGIC **Author(s)** Sam Ip exploring using previously D01 by Sam Hollings, Jenny Cooper, Venexia Walker
+# MAGIC
+# MAGIC ** THIS COMMAND WAS RUN ON 28 JULY 2021 FOR THIS PROJECT**
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CLEAR CACHE
+
+# COMMAND ----------
+
+# Define create table function by Sam Hollings
+# Source: Workspaces/dars_nic_391419_j3w9t_collab/DATA_CURATION_wrang000_functions
+
+def create_table(table_name:str, database_name:str='dars_nic_391419_j3w9t_collab', select_sql_script:str=None) -> None:
+  """Will save to table from a global_temp view of the same name as the supplied table name (if no SQL script is supplied)
+  Otherwise, can supply a SQL script and this will be used to make the table with the specificed name, in the specifcied database."""
+  
+  spark.conf.set("spark.sql.legacy.allowCreatingManagedTableUsingNonemptyLocation","true")
+  
+  if select_sql_script is None:
+    select_sql_script = f"SELECT * FROM global_temp.{table_name}"
+  
+  spark.sql(f"""CREATE TABLE {database_name}.{table_name} AS
+                {select_sql_script}
+             """)
+  spark.sql(f"ALTER TABLE {database_name}.{table_name} OWNER TO {database_name}")
+  
+def drop_table(table_name:str, database_name:str='dars_nic_391419_j3w9t_collab', if_exists=True):
+  if if_exists:
+    IF_EXISTS = 'IF EXISTS'
+  else: 
+    IF_EXISTS = ''
+  spark.sql(f"DROP TABLE {IF_EXISTS} {database_name}.{table_name}")
+
+# COMMAND ----------
+
+# MAGIC %run "/Workspaces/dars_nic_391419_j3w9t_collab/CCU002_06/CCU002_06-functions/wrang000_functions"
+
+# COMMAND ----------
+
+import datetime 
+import pandas as pd
+
+batch_id = None
+#cutoff = '2021-03-18'
+
+copy_date = datetime.datetime.now()
+project_prefix = 'ccu002_06_'
+collab_database_name = 'dars_nic_391419_j3w9t_collab'
+
+
+# COMMAND ----------
+
+df_tables_list = spark.table(f'{collab_database_name}.wrang005_asset_inventory').toPandas().sort_values(['core_asset','tableName'],ascending=[False,True])
+
+# COMMAND ----------
+
+display(df_tables_list)
+
+# COMMAND ----------
+
+df_freeze_table_list = pd.DataFrame([
+             {'tableName':'primary_care_meds_dars_nic_391419_j3w9t','extra_columns':'','date_cutoff_col':'ProcessingPeriodDate', 'ignore_cutoff': True,'batch_id': None},
+             {'tableName':'gdppr_dars_nic_391419_j3w9t','extra_columns':'','date_cutoff_col':'DATE', 'ignore_cutoff': True,'batch_id': None},
+             {'tableName':'deaths_dars_nic_391419_j3w9t','extra_columns':", to_date(REG_DATE_OF_DEATH, 'yyyyMMdd') as REG_DATE_OF_DEATH_FORMATTED, to_date(REG_DATE, 'yyyyMMdd') as REG_DATE_FORMATTED",'date_cutoff_col':"REG_DATE_OF_DEATH_FORMATTED", 'ignore_cutoff': True,'batch_id': None},
+             {'tableName':'hes_apc_all_years','extra_columns':'','date_cutoff_col':'ADMIDATE', 'ignore_cutoff': True,'batch_id': None},
+            {'tableName': 'hes_op_all_years','extra_columns':'','date_cutoff_col':'APPTDATE', 'ignore_cutoff': True,'batch_id': None},
+            {'tableName': 'hes_ae_all_years','extra_columns':'','date_cutoff_col':'ARRIVALDATE', 'ignore_cutoff': True,'batch_id': None},
+            {'tableName': 'hes_cc_all_years','extra_columns':'','date_cutoff_col':'ADMIDATE', 'ignore_cutoff': True,'batch_id': None},
+            {'tableName': 'pillar_2_dars_nic_391419_j3w9t','extra_columns':'','date_cutoff_col':'AppointmentDate', 'ignore_cutoff': True,'batch_id': None},
+            {'tableName': 'vaccine_status_dars_nic_391419_j3w9t','extra_columns':'','date_cutoff_col':'RECORDED_DATE', 'ignore_cutoff': True, 'batch_id' : None}
+])
+
+# insert the above batch ID if not specified in the df_freeze_Table_list
+if batch_id is not None:
+  df_freeze_table_list = df_freeze_table_list.fillna(value={'batch_id':batch_id})
+
+# COMMAND ----------
+
+pd.DataFrame(df_freeze_table_list)
+
+# COMMAND ----------
+
+# MAGIC %md get the max batch Id for each table which doesn't already have a batchId specified:
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # make table for PLOTS!
+
+# COMMAND ----------
+
+import matplotlib.pyplot as plt
+from pyspark.sql.functions import *
+import pyspark.sql as SQL
+
+for idx, row in df_freeze_table_list.iterrows():
+    table_name = row.tableName 
+    cutoff_col = row.date_cutoff_col
+    print(f"{table_name}......{cutoff_col}")
+    df = spark.sql(f"""
+    SELECT {cutoff_col} as record_date
+    FROM {collab_database_name}.{project_prefix}{table_name}""");
+    df = df.withColumn("record_date", to_date(col("record_date"), "yyyyMMdd")).filter(col("record_date") > "2021-09-15")
+    df.createOrReplaceGlobalTempView(f'ccu002_06_histdat_{table_name}')
+    drop_table(f'ccu002_06_histdat_{table_name}')
+    create_table(f'ccu002_06_histdat_{table_name}')
+
+
+# COMMAND ----------
+
+table_name = "gdppr_dars_nic_391419_j3w9t"
+cutoff_col = "DATE"
+print(f"{table_name}......{cutoff_col}")
+df = spark.sql(f"""
+SELECT {cutoff_col} as record_date
+FROM {collab_database_name}.{project_prefix}{table_name}""");
+df = df.withColumn("record_date", to_date(col("record_date"))).filter((col("record_date") > "2021-09-15") & (col("record_date") < "2022-02-06"))
+df.createOrReplaceGlobalTempView(f'ccu002_06_histdat_{table_name}')
+drop_table(f'ccu002_06_histdat_{table_name}')
+create_table(f'ccu002_06_histdat_{table_name}')
+
+
+# COMMAND ----------
+
+df.show()
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC clear cache
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT *
+# MAGIC FROM dars_nic_391419_j3w9t_collab.ccu002_06_histdat_pillar_2_dars_nic_391419_j3w9t
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT count(*) 
+# MAGIC FROM dars_nic_391419_j3w9t_collab.ccu002_06_hes_apc_all_years
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT count(*) 
+# MAGIC FROM dars_nic_391419_j3w9t_collab.hes_apc_all_years
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT *
+# MAGIC FROM dars_nic_391419_j3w9t.primary_care_meds_dars_nic_391419_j3w9t
+
+# COMMAND ----------
+
