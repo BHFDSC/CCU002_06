@@ -1,0 +1,432 @@
+# Databricks notebook source
+# MAGIC %md # CCU002_06-D16-cohort-flow-diagram_3mil_newvac
+# MAGIC
+# MAGIC **Description** This notebook makes a cohort flow diagram.
+# MAGIC
+# MAGIC **Last edited** 13/09/23
+# MAGIC
+# MAGIC **Author(s)** Teri North
+# MAGIC
+# MAGIC **Notes** Updated cohort flow diagram with latest cohort data - EDITING UNFINISHED
+
+# COMMAND ----------
+
+# MAGIC %md ## Clear cache
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CLEAR CACHE
+
+# COMMAND ----------
+
+# MAGIC %md ## Define functions
+
+# COMMAND ----------
+
+def drop_create_table(table_name:str, save2database_name:str='dsa_391419_j3w9t_collab'):
+    sql(f"""DROP TABLE IF EXISTS {save2database_name}.{table_name}""")
+    sql(f"""CREATE TABLE {save2database_name}.{table_name} AS SELECT * FROM {table_name} """)
+
+# COMMAND ----------
+
+# MAGIC %md ## Repeat code from D13 which makes the temporary view ccu002_06_exclusion_cohort_spine_input
+
+# COMMAND ----------
+
+# MAGIC %md ### Note: ignore CHUNK here - it is random and will be different to D13
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_COPY_exclusion_cohort_spine_input AS
+# MAGIC SELECT FLOOR(RAND()*10)+1 AS CHUNK, -- CHUNK divides the data into parts for import into R
+# MAGIC        cohort.NHS_NUMBER_DEID,
+# MAGIC        
+# MAGIC        --vaccination covariates
+# MAGIC        vaccination.vaccination_dose1_date,
+# MAGIC        vaccination.vaccination_dose1_product,
+# MAGIC        vaccination.vaccination_dose1_situation,
+# MAGIC        vaccination.vaccination_dose2_date,
+# MAGIC        vaccination.vaccination_dose2_product,
+# MAGIC        vaccination.vaccination_dose2_situation,
+# MAGIC        vaccination.vaccination_dose3_date,
+# MAGIC        vaccination.vaccination_dose3_product,
+# MAGIC        vaccination.vaccination_dose3_situation,
+# MAGIC        vaccination.vaccination_dose_booster_date,       
+# MAGIC        vaccination.vaccination_dose_booster_product,
+# MAGIC        vaccination.vaccination_dose_booster_situation,
+# MAGIC        CASE WHEN vaccination.vaccination_conflicted=1 THEN 1 ELSE 0 END AS vaccination_conflicted,
+# MAGIC        
+# MAGIC        -- dose 1 covariates
+# MAGIC        FLOOR(DATEDIFF('2020-12-08', cohort.DATE_OF_BIRTH)/365.25) AS cov_dose1_age,
+# MAGIC        cohort.SEX AS cov_dose1_sex,
+# MAGIC        CASE WHEN cohort.CATEGORISED_ETHNICITY IS NULL THEN 'missing' ELSE cohort.CATEGORISED_ETHNICITY END AS cov_dose1_ethnicity,
+# MAGIC        cov_dose1_lsoa.cov_dose1_lsoa,
+# MAGIC        cov_dose1_region.cov_dose1_region,
+# MAGIC        cov_dose1_deprivation.cov_dose1_deprivation,
+# MAGIC               
+# MAGIC         -- dose 2 covariates
+# MAGIC        FLOOR(DATEDIFF(vaccination.vaccination_dose1_date, cohort.DATE_OF_BIRTH)/365.25) AS cov_dose2_age,
+# MAGIC        cohort.SEX AS cov_dose2_sex,
+# MAGIC        CASE WHEN cohort.CATEGORISED_ETHNICITY IS NULL THEN 'missing' ELSE cohort.CATEGORISED_ETHNICITY END AS cov_dose2_ethnicity,
+# MAGIC        cov_dose2_lsoa.cov_dose2_lsoa,
+# MAGIC        cov_dose2_region.cov_dose2_region,
+# MAGIC        cov_dose2_deprivation.cov_dose2_deprivation,
+# MAGIC        
+# MAGIC        -- booster covariates
+# MAGIC        FLOOR(DATEDIFF(vaccination.vaccination_dose2_date, cohort.DATE_OF_BIRTH)/365.25) AS cov_booster_age,
+# MAGIC        cohort.SEX AS cov_booster_sex,
+# MAGIC        CASE WHEN cohort.CATEGORISED_ETHNICITY IS NULL THEN 'missing' ELSE cohort.CATEGORISED_ETHNICITY END AS cov_booster_ethnicity,
+# MAGIC        cov_booster_lsoa.cov_booster_lsoa,
+# MAGIC        cov_booster_region.cov_booster_region,
+# MAGIC        cov_booster_deprivation.cov_booster_deprivation,
+# MAGIC        
+# MAGIC        -- outcomes
+# MAGIC        cohort.DATE_OF_DEATH AS out_death
+# MAGIC
+# MAGIC
+# MAGIC FROM dars_nic_391419_j3w9t_collab.ccu002_06_included_patients AS cohort
+# MAGIC
+# MAGIC --vaccination dataset
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_vaccination_3mil AS vaccination ON cohort.NHS_NUMBER_DEID = vaccination.NHS_NUMBER_DEID
+# MAGIC
+# MAGIC --dose 1 covariate datasets
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_lsoa AS cov_dose1_lsoa ON cohort.NHS_NUMBER_DEID = cov_dose1_lsoa.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_region AS cov_dose1_region ON cov_dose1_lsoa.cov_dose1_lsoa = cov_dose1_region.LSOA
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_deprivation AS cov_dose1_deprivation ON cov_dose1_lsoa.cov_dose1_lsoa = cov_dose1_deprivation.LSOA
+# MAGIC
+# MAGIC --dose 2 covariate datasets
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_lsoa AS cov_dose2_lsoa ON cohort.NHS_NUMBER_DEID = cov_dose2_lsoa.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_region AS cov_dose2_region ON cov_dose2_lsoa.cov_dose2_lsoa = cov_dose2_region.LSOA
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_deprivation AS cov_dose2_deprivation ON cov_dose2_lsoa.cov_dose2_lsoa = cov_dose2_deprivation.LSOA
+# MAGIC
+# MAGIC --booster covariate datasets
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_lsoa AS cov_booster_lsoa ON cohort.NHS_NUMBER_DEID = cov_booster_lsoa.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_region AS cov_booster_region ON cov_booster_lsoa.cov_booster_lsoa = cov_booster_region.LSOA
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_deprivation AS cov_booster_deprivation ON cov_booster_lsoa.cov_booster_lsoa = cov_booster_deprivation.LSOA
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC START HERE
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_COUNT_COPY_exclusion_cohort_spine_input AS
+# MAGIC SELECT COUNT (*) AS cohort_spine_input_count FROM ccu002_06_COPY_exclusion_cohort_spine_input 
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM ccu002_06_COUNT_COPY_exclusion_cohort_spine_input
+
+# COMMAND ----------
+
+# MAGIC %md ### Double check the count by distinct identifier is the same
+
+# COMMAND ----------
+
+# MAGIC %sql 
+# MAGIC SELECT COUNT(DISTINCT NHS_NUMBER_DEID) FROM ccu002_06_COPY_exclusion_cohort_spine_input
+
+# COMMAND ----------
+
+# MAGIC %md ## Apply exclusion categories
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_excl_sex AS
+# MAGIC SELECT *
+# MAGIC FROM ccu002_06_COPY_exclusion_cohort_spine_input 
+# MAGIC
+# MAGIC -- Remove people listed as neither 'male' or 'female'
+# MAGIC WHERE ((cov_dose1_sex=1) OR (cov_dose1_sex=2))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_COUNT_excl_sex AS 
+# MAGIC SELECT COUNT (*) AS excl_sex_count FROM ccu002_06_cohort_flow_excl_sex
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_excl_age AS
+# MAGIC SELECT * 
+# MAGIC FROM ccu002_06_cohort_flow_excl_sex 
+# MAGIC
+# MAGIC -- Remove people not aged between 18 and 110 inclusive
+# MAGIC WHERE (cov_dose1_age>=18 AND cov_dose1_age<111 AND (cov_dose1_age IS NOT NULL))
+# MAGIC AND ((cov_dose2_age>=cov_dose1_age AND (cov_dose1_age IS NOT NULL) AND (cov_dose2_age IS NOT NULL)) OR (cov_dose2_age IS NULL))
+# MAGIC AND ((cov_booster_age>=cov_dose2_age AND (cov_booster_age IS NOT NULL) AND (cov_dose2_age IS NOT NULL)) OR (cov_booster_age IS NULL))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_COUNT_excl_age AS 
+# MAGIC SELECT COUNT (*) AS excl_age_count FROM ccu002_06_cohort_flow_excl_age
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_excl_early_vac AS
+# MAGIC SELECT * 
+# MAGIC FROM ccu002_06_cohort_flow_excl_age
+# MAGIC
+# MAGIC -- Remove people vaccinated before the UK vaccination program began
+# MAGIC WHERE ((vaccination_dose1_date IS NULL) OR ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose1_date>='2020-12-08')))
+# MAGIC AND ((vaccination_dose2_date IS NULL) OR ((vaccination_dose2_date IS NOT NULL) AND (vaccination_dose2_date>='2020-12-08')))
+# MAGIC AND ((vaccination_dose_booster_date IS NULL) OR ((vaccination_dose_booster_date IS NOT NULL) AND (vaccination_dose_booster_date>='2020-12-08')))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_COUNT_excl_early_vac AS 
+# MAGIC SELECT COUNT (*) AS excl_early_vac FROM ccu002_06_cohort_flow_excl_early_vac
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_excl_death_prevac AS
+# MAGIC SELECT * 
+# MAGIC FROM ccu002_06_cohort_flow_excl_early_vac
+# MAGIC
+# MAGIC -- Remove people who died before the UK vaccination program began
+# MAGIC WHERE ((out_death IS NULL) OR ((out_death IS NOT NULL) AND (out_death>='2020-12-08'))) 
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_COUNT_excl_death_prevac AS 
+# MAGIC SELECT COUNT (*) AS excl_death_prevac FROM ccu002_06_cohort_flow_excl_death_prevac
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_excl_non_eng AS
+# MAGIC SELECT * 
+# MAGIC FROM ccu002_06_cohort_flow_excl_death_prevac 
+# MAGIC
+# MAGIC -- Remove people not from England
+# MAGIC WHERE ((cov_dose1_lsoa IS NULL) OR (LEFT(cov_dose1_lsoa,1)=="E"))
+# MAGIC AND ((cov_dose2_lsoa IS NULL) OR (LEFT(cov_dose2_lsoa,1)=="E"))
+# MAGIC AND ((cov_booster_lsoa IS NULL) OR (LEFT(cov_booster_lsoa,1)=="E"))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_COUNT_excl_non_eng AS 
+# MAGIC SELECT COUNT (*) AS excl_non_eng FROM ccu002_06_cohort_flow_excl_non_eng
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_excl_missing_vacs AS
+# MAGIC SELECT * 
+# MAGIC FROM ccu002_06_cohort_flow_excl_non_eng 
+# MAGIC
+# MAGIC --Remove individuals with a second vaccination but no first vaccination
+# MAGIC --Remove individuals with a booster vaccination but no first and second vaccination 
+# MAGIC WHERE (((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND (vaccination_dose_booster_date IS NOT NULL)) OR ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND (vaccination_dose_booster_date IS NULL)) OR ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NULL) AND (vaccination_dose_booster_date IS NULL)) OR ((vaccination_dose1_date IS NULL) AND (vaccination_dose2_date IS NULL) AND (vaccination_dose_booster_date IS NULL)))
+# MAGIC --Remove individuals with a third vaccination but no first and second vaccination 
+# MAGIC AND (((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND (vaccination_dose3_date IS NOT NULL)) OR ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND (vaccination_dose3_date IS NULL)) OR ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NULL) AND (vaccination_dose3_date IS NULL)) OR ((vaccination_dose1_date IS NULL) AND (vaccination_dose2_date IS NULL) AND (vaccination_dose3_date IS NULL)))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_COUNT_excl_missing_vacs AS
+# MAGIC SELECT COUNT (*) AS excl_missing_vacs FROM ccu002_06_cohort_flow_excl_missing_vacs
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_excl_ord_vacs AS
+# MAGIC SELECT * 
+# MAGIC FROM ccu002_06_cohort_flow_excl_missing_vacs
+# MAGIC
+# MAGIC -- Remove individuals whose second dose is before their first dose
+# MAGIC WHERE (((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND (vaccination_dose1_date < vaccination_dose2_date)) OR (vaccination_dose1_date IS NULL) OR (vaccination_dose2_date IS NULL))
+# MAGIC -- Remove individuals whose booster dose is before their first or second dose 
+# MAGIC AND (((vaccination_dose2_date IS NOT NULL) AND (vaccination_dose_booster_date IS NOT NULL) AND (vaccination_dose2_date < vaccination_dose_booster_date)) OR (vaccination_dose2_date IS NULL) OR (vaccination_dose_booster_date IS NULL))
+# MAGIC AND (((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose_booster_date IS NOT NULL) AND (vaccination_dose1_date < vaccination_dose_booster_date)) OR (vaccination_dose1_date IS NULL) OR (vaccination_dose_booster_date IS NULL))
+# MAGIC --Remove individuals whose third dose is before their first or second dose 
+# MAGIC AND (((vaccination_dose2_date IS NOT NULL) AND (vaccination_dose3_date IS NOT NULL) AND (vaccination_dose2_date < vaccination_dose3_date)) OR (vaccination_dose2_date IS NULL) OR (vaccination_dose3_date IS NULL))
+# MAGIC AND (((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose3_date IS NOT NULL) AND (vaccination_dose1_date < vaccination_dose3_date)) OR (vaccination_dose1_date IS NULL) OR (vaccination_dose3_date IS NULL))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_COUNT_excl_ord_vacs AS 
+# MAGIC SELECT COUNT (*) AS excl_ord_vacs FROM ccu002_06_cohort_flow_excl_ord_vacs
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_excl_d1d2_3wks AS
+# MAGIC SELECT * 
+# MAGIC FROM ccu002_06_cohort_flow_excl_ord_vacs 
+# MAGIC
+# MAGIC -- Remove individuals whose second dose is less than 3 weeks after their first dose
+# MAGIC WHERE (((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND DATEDIFF(vaccination_dose2_date, vaccination_dose1_date)>=21) OR (vaccination_dose1_date IS NULL) OR (vaccination_dose2_date IS NULL))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_COUNT_excl_d1d2_3wks AS 
+# MAGIC SELECT COUNT (*) AS excl_d1d2_3wks FROM ccu002_06_cohort_flow_excl_d1d2_3wks
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_excl_d2boost_90days AS
+# MAGIC SELECT * 
+# MAGIC FROM ccu002_06_cohort_flow_excl_d1d2_3wks 
+# MAGIC
+# MAGIC --Remove individuals whose booster dose is less than 3 months (90 days) after their second dose
+# MAGIC WHERE (((vaccination_dose2_date IS NOT NULL) AND (vaccination_dose_booster_date IS NOT NULL) AND DATEDIFF(vaccination_dose_booster_date, vaccination_dose2_date)>=90) OR (vaccination_dose2_date IS NULL) OR (vaccination_dose_booster_date IS NULL))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_COUNT_excl_d2boost_90days AS 
+# MAGIC SELECT COUNT (*) AS excl_d2boost_90days FROM ccu002_06_cohort_flow_excl_d2boost_90days
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_excl_d1d2_mixed AS
+# MAGIC SELECT * 
+# MAGIC FROM ccu002_06_cohort_flow_excl_d2boost_90days 
+# MAGIC
+# MAGIC -- Remove individuals with mixed vaccine products before 7 May 2021
+# MAGIC WHERE (((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND ((vaccination_dose1_product=vaccination_dose2_product) OR (vaccination_dose1_product!=vaccination_dose2_product AND vaccination_dose2_date>'2021-05-07'))) OR (vaccination_dose1_date IS NULL) OR (vaccination_dose2_date IS NULL))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_COUNT_excl_d1d2_mixed AS 
+# MAGIC SELECT COUNT (*) AS excl_d1d2_mixed FROM ccu002_06_cohort_flow_excl_d1d2_mixed
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_excl_conflicted AS
+# MAGIC SELECT * 
+# MAGIC FROM ccu002_06_cohort_flow_excl_d1d2_mixed 
+# MAGIC
+# MAGIC -- Remove individuals with conflicted vaccination record
+# MAGIC WHERE (vaccination_conflicted=0)
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_COUNT_excl_conflicted AS 
+# MAGIC SELECT COUNT (*) AS excl_conflicted FROM ccu002_06_cohort_flow_excl_conflicted
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_excl_situation AS
+# MAGIC SELECT * 
+# MAGIC FROM ccu002_06_cohort_flow_excl_conflicted 
+# MAGIC
+# MAGIC -- Remove indiviuduals with a situation attached to any vaccination
+# MAGIC WHERE ((vaccination_dose1_situation IS NULL) AND (vaccination_dose2_situation IS NULL) AND (vaccination_dose_booster_situation IS NULL) AND (vaccination_dose3_situation IS NULL))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_COUNT_excl_situation AS 
+# MAGIC SELECT COUNT (*) AS excl_situation FROM ccu002_06_cohort_flow_excl_situation
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC SELECT COUNT (*) FROM ccu002_06_cohort_flow_excl_situation
+
+# COMMAND ----------
+
+# MAGIC %md ## Create cohort flow temporary view as output
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_flow_3mil AS 
+# MAGIC SELECT 'A_cohort_flow_diagram_showing_exclusions'
+# MAGIC UNION ALL
+# MAGIC SELECT CONCAT('A: ', (SELECT FORMAT_NUMBER((ROUND((cohort_spine_input_count/5),0))*5,0 ) FROM ccu002_06_COUNT_COPY_exclusion_cohort_spine_input))
+# MAGIC UNION ALL
+# MAGIC SELECT 'B: exclude those listed as neither male or female'
+# MAGIC UNION ALL
+# MAGIC SELECT CONCAT('B: ', (SELECT FORMAT_NUMBER((ROUND((excl_sex_count/5),0))*5,0) FROM ccu002_06_cohort_flow_COUNT_excl_sex))
+# MAGIC UNION ALL
+# MAGIC SELECT 'C: exclude those not aged between 18 and 110 inclusive at dose 1, and those where dose 2 age is younger than dose 1 age, or booster age is younger than dose 2 age '
+# MAGIC UNION ALL 
+# MAGIC SELECT CONCAT('C: ', (SELECT FORMAT_NUMBER((ROUND((excl_age_count/5),0))*5,0) FROM ccu002_06_cohort_flow_COUNT_excl_age))
+# MAGIC UNION ALL 
+# MAGIC SELECT 'D: exclude those vaccinated before the UK vaccination program began'
+# MAGIC UNION ALL
+# MAGIC SELECT CONCAT('D: ', (SELECT FORMAT_NUMBER((ROUND((excl_early_vac/5),0))*5,0) FROM ccu002_06_cohort_flow_COUNT_excl_early_vac))
+# MAGIC UNION ALL
+# MAGIC SELECT 'E: exclude those who died before the UK vaccination program began'
+# MAGIC UNION ALL 
+# MAGIC SELECT CONCAT('E: ', (SELECT FORMAT_NUMBER((ROUND((excl_death_prevac/5),0))*5,0) FROM ccu002_06_cohort_flow_COUNT_excl_death_prevac))
+# MAGIC UNION ALL 
+# MAGIC SELECT 'F: exclude those not recorded as living in England at all stages of the analysis individual is included in'
+# MAGIC UNION ALL
+# MAGIC SELECT CONCAT('F: ', (SELECT FORMAT_NUMBER((ROUND((excl_non_eng/5),0))*5,0) FROM ccu002_06_cohort_flow_COUNT_excl_non_eng))
+# MAGIC UNION ALL
+# MAGIC SELECT 'G: exclude those without vaccination dates at previous phases (e.g. dose 2 vaccination but no dose 1 vaccination)'
+# MAGIC UNION ALL 
+# MAGIC SELECT CONCAT('G: ', (SELECT FORMAT_NUMBER((ROUND((excl_missing_vacs/5),0))*5,0) FROM ccu002_06_cohort_flow_COUNT_excl_missing_vacs))
+# MAGIC UNION ALL
+# MAGIC SELECT 'H: exclude those with vaccination dates not adhering to logical ordering e.g. d1, d2, booster; d1, d2, d3'
+# MAGIC UNION ALL 
+# MAGIC SELECT CONCAT('H: ', (SELECT FORMAT_NUMBER((ROUND((excl_ord_vacs/5),0))*5,0) FROM ccu002_06_cohort_flow_COUNT_excl_ord_vacs))
+# MAGIC UNION ALL 
+# MAGIC SELECT 'I: exclude individuals whos dose2 is less than 3 weeks after dose1'
+# MAGIC UNION ALL
+# MAGIC SELECT CONCAT('I: ', (SELECT FORMAT_NUMBER((ROUND((excl_d1d2_3wks/5),0))*5,0) FROM ccu002_06_cohort_flow_COUNT_excl_d1d2_3wks))
+# MAGIC UNION ALL 
+# MAGIC SELECT 'J: exclude those whos booster dose is less than 90 days after second dose'
+# MAGIC UNION ALL
+# MAGIC SELECT CONCAT('J: ', (SELECT FORMAT_NUMBER((ROUND((excl_d2boost_90days/5),0))*5,0) FROM ccu002_06_cohort_flow_COUNT_excl_d2boost_90days))
+# MAGIC UNION ALL 
+# MAGIC SELECT 'K: exclude those with mixed vaccine products for doses 1 and 2 on or before 7 May 2021'
+# MAGIC UNION ALL
+# MAGIC SELECT CONCAT('K: ', (SELECT FORMAT_NUMBER((ROUND((excl_d1d2_mixed/5),0))*5,0) FROM ccu002_06_cohort_flow_COUNT_excl_d1d2_mixed))
+# MAGIC UNION ALL 
+# MAGIC SELECT 'L: exclude those with a conflicted vaccination record'
+# MAGIC UNION ALL
+# MAGIC SELECT CONCAT('L: ', (SELECT FORMAT_NUMBER((ROUND((excl_conflicted/5),0))*5,0) FROM ccu002_06_cohort_flow_COUNT_excl_conflicted))
+# MAGIC UNION ALL 
+# MAGIC SELECT 'M: exclude those with a situation attached to any vaccination'
+# MAGIC UNION ALL
+# MAGIC SELECT CONCAT('M: ', (SELECT FORMAT_NUMBER((ROUND((excl_situation/5),0))*5,0) FROM ccu002_06_cohort_flow_COUNT_excl_situation))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM ccu002_06_cohort_flow_3mil
+
+# COMMAND ----------
+
+# MAGIC %md ## Save cohort flow table
+
+# COMMAND ----------
+
+drop_table('ccu002_06_cohort_flow_3mil')
+
+# COMMAND ----------
+
+create_table('ccu002_06_cohort_flow_3mil')
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_cohort_flow_3mil
