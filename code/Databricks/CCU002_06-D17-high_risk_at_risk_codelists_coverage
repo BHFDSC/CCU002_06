@@ -1,0 +1,148 @@
+# Databricks notebook source
+# MAGIC %md # CCU002_06-D17-high_risk_at_risk_codelists_coverage
+# MAGIC
+# MAGIC **Description** This notebook, for CCU002_06, checks the coverage of the "at risk" codelists in the gdppr and medication datasets
+# MAGIC
+# MAGIC **Last edited** 06/06/23
+# MAGIC
+# MAGIC **Authors** Teri North
+
+# COMMAND ----------
+
+# MAGIC %md ## Clear cache
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CLEAR CACHE
+
+# COMMAND ----------
+
+# MAGIC %md ## Define functions
+
+# COMMAND ----------
+
+# Define create table function by Sam Hollings
+# Source: Workspaces/dars_nic_391419_j3w9t_collab/DATA_CURATION_wrang000_functions
+
+def create_table(table_name:str, database_name:str='dars_nic_391419_j3w9t_collab', select_sql_script:str=None) -> None:
+  """Will save to table from a global_temp view of the same name as the supplied table name (if no SQL script is supplied)
+  Otherwise, can supply a SQL script and this will be used to make the table with the specificed name, in the specifcied database."""
+  
+  spark.conf.set("spark.sql.legacy.allowCreatingManagedTableUsingNonemptyLocation","true")
+  
+  if select_sql_script is None:
+    select_sql_script = f"SELECT * FROM global_temp.{table_name}"
+  
+  spark.sql(f"""CREATE TABLE {database_name}.{table_name} AS
+                {select_sql_script}
+             """)
+  spark.sql(f"ALTER TABLE {database_name}.{table_name} OWNER TO {database_name}")
+  
+def drop_table(table_name:str, database_name:str='dars_nic_391419_j3w9t_collab', if_exists=True):
+  if if_exists:
+    IF_EXISTS = 'IF EXISTS'
+  else: 
+    IF_EXISTS = ''
+  spark.sql(f"DROP TABLE {IF_EXISTS} {database_name}.{table_name}")
+
+# COMMAND ----------
+
+# MAGIC %md ## Append all codelists to make one "at risk" list
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_d17_at_risk_primis_ALL AS 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_astadm_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_ast_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_astrx_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_resp_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_cns_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_diab_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_dmres_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_sev_mental_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_smhres_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_chd_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_ckd15_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_ckd35_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_ckd_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_cld_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_immdx_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_immrx_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_spln_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_learndis_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_bmi_stage_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_sev_obesity_primis 
+# MAGIC UNION ALL 
+# MAGIC SELECT * FROM dars_nic_391419_j3w9t_collab.ccu002_06_d17_bmi_primis
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_d17_at_risk_primis_distin AS SELECT DISTINCT code FROM global_temp.ccu002_06_d17_at_risk_primis_ALL
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC SELECT COUNT (*) FROM global_temp.ccu002_06_d17_at_risk_primis_distin
+
+# COMMAND ----------
+
+# MAGIC %md ## Check how many of the primis codes are in the gdppr data
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_d17_at_risk_primis_gdppr AS SELECT DISTINCT CODE FROM (SELECT CODE FROM dars_nic_391419_j3w9t_collab.ccu002_06_gdppr_dars_nic_391419_j3w9t WHERE CODE IN (SELECT code FROM global_temp.ccu002_06_d17_at_risk_primis_distin))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC SELECT COUNT (*) FROM global_temp.ccu002_06_d17_at_risk_primis_gdppr
+
+# COMMAND ----------
+
+# MAGIC %md ## Check how many of the primis codes are in the medication data
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_d17_at_risk_primis_prim_care_meds AS SELECT DISTINCT PrescribedBNFCode FROM (SELECT PrescribedBNFCode FROM dars_nic_391419_j3w9t_collab.ccu002_06_primary_care_meds_dars_nic_391419_j3w9t WHERE PrescribedBNFCode IN (SELECT code FROM global_temp.ccu002_06_d17_at_risk_primis_distin))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC DESCRIBE dars_nic_391419_j3w9t_collab.ccu002_06_primary_care_meds_dars_nic_391419_j3w9t
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC SELECT COUNT (*) FROM global_temp.ccu002_06_d17_at_risk_primis_prim_care_meds
