@@ -1,0 +1,390 @@
+# Databricks notebook source
+# MAGIC %md # CCU002_06-D09-covariates_dose1
+# MAGIC  
+# MAGIC **Description** This notebook extracts the covariates for the dose 1 analysis.
+# MAGIC
+# MAGIC **Last edited** 20/07/22
+# MAGIC
+# MAGIC **Author(s)** Based on work by: Sam Ip, Spencer Keene, Rochelle Knight, Venexia Walker; Updated by: Teri North
+
+# COMMAND ----------
+
+# MAGIC %md ## Clear cache
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CLEAR CACHE
+
+# COMMAND ----------
+
+# MAGIC %md ## Define functions
+
+# COMMAND ----------
+
+# Define create table function by Sam Hollings
+# Source: Workspaces/dars_nic_391419_j3w9t_collab/DATA_CURATION_wrang000_functions
+
+def create_table(table_name:str, database_name:str='dars_nic_391419_j3w9t_collab', select_sql_script:str=None) -> None:
+  """Will save to table from a global_temp view of the same name as the supplied table name (if no SQL script is supplied)
+  Otherwise, can supply a SQL script and this will be used to make the table with the specificed name, in the specifcied database."""
+  
+  spark.conf.set("spark.sql.legacy.allowCreatingManagedTableUsingNonemptyLocation","true")
+  
+  if select_sql_script is None:
+    select_sql_script = f"SELECT * FROM global_temp.{table_name}"
+  
+  spark.sql(f"""CREATE TABLE {database_name}.{table_name} AS
+                {select_sql_script}
+             """)
+  spark.sql(f"ALTER TABLE {database_name}.{table_name} OWNER TO {database_name}")
+  
+def drop_table(table_name:str, database_name:str='dars_nic_391419_j3w9t_collab', if_exists=True):
+  if if_exists:
+    IF_EXISTS = 'IF EXISTS'
+  else: 
+    IF_EXISTS = ''
+  spark.sql(f"DROP TABLE {IF_EXISTS} {database_name}.{table_name}")
+
+# COMMAND ----------
+
+# MAGIC %md ## Define parameters
+
+# COMMAND ----------
+
+index_date = '2020-12-08'
+index_date_lag3mo = '2020-09-08'
+previous_year_date = '2019-12-08'
+project_prefix='ccu002_06_'
+collab_database_name='dars_nic_391419_j3w9t_collab'
+codelist_table='codelists'
+gdppr_data = 'gdppr_dars_nic_391419_j3w9t'
+hes_apc_data = 'hes_apc_all_years'
+
+# COMMAND ----------
+
+from pyspark.sql.functions import to_date, lit, countDistinct, col, date_add
+import pyspark.sql.functions as f
+from functools import reduce
+
+# COMMAND ----------
+
+hes_apc = spark.table(collab_database_name + '.' + project_prefix + hes_apc_data)
+gdppr = spark.table(collab_database_name + '.' + project_prefix + gdppr_data )
+
+# COMMAND ----------
+
+# MAGIC %md ## Medical history
+
+# COMMAND ----------
+
+medhistory = ['ami','diabetes','depression','bmi_obesity','cancer','copd','ckd','liver_disease','dementia','stroke_all','all_vte','thrombophilia','cov_venous','cov_arterial']
+
+# COMMAND ----------
+
+# MAGIC %md ### HES APC
+
+# COMMAND ----------
+
+for codelist in medhistory:
+   sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_hesapc_" + codelist + " AS SELECT DISTINCT NHS_NUMBER_DEID FROM (SELECT NHS_NUMBER_DEID, EPISTART FROM dars_nic_391419_j3w9t_collab.ccu002_06_hes_apc_longformat WHERE CODE IN (SELECT code FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists WHERE ((group_name_cov = '" + codelist + "' AND TERMINOLOGY='ICD10') OR (cov_composite = '" + codelist + "' AND TERMINOLOGY='ICD10')))) WHERE EPISTART<'" + index_date + "'")
+
+# COMMAND ----------
+
+# MAGIC %md ### SUS
+
+# COMMAND ----------
+
+for codelist in medhistory:
+   sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_sus_" + codelist + " AS SELECT DISTINCT NHS_NUMBER_DEID FROM (SELECT NHS_NUMBER_DEID, EPISODE_START_DATE FROM dars_nic_391419_j3w9t_collab.ccu002_06_sus_longformat WHERE ((CODE IN (SELECT code FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists WHERE (group_name_cov = '" + codelist + "' OR cov_composite = '" + codelist + "') and terminology=='ICD10')) OR (LEFT(CODE,3) IN (SELECT code FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists WHERE (group_name_cov = '" + codelist + "' OR cov_composite = '" + codelist + "') and terminology=='ICD10')))) WHERE EPISODE_START_DATE<'" + index_date + "'")
+
+# COMMAND ----------
+
+# MAGIC %md ### GDPPR 
+
+# COMMAND ----------
+
+# MAGIC %md ####SNOMED
+
+# COMMAND ----------
+
+for codelist in medhistory:
+  sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_snomed_" + codelist + " AS SELECT DISTINCT NHS_NUMBER_DEID FROM (SELECT NHS_NUMBER_DEID, DATE FROM dars_nic_391419_j3w9t_collab.ccu002_06_gdppr_dars_nic_391419_j3w9t WHERE (CODE IN (SELECT code FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists WHERE (group_name_cov = '" + codelist + "' OR cov_composite = '" + codelist + "') and (terminology='SNOMED' OR terminology='CTV3_SNOMEDmapped') ))) WHERE DATE<'" + index_date + "'")
+
+# COMMAND ----------
+
+# MAGIC %md ####DMD 
+
+# COMMAND ----------
+
+for codelist in medhistory:
+  sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_dmd_" + codelist + " AS SELECT DISTINCT NHS_NUMBER_DEID, DATE FROM (SELECT NHS_NUMBER_DEID, DATE FROM dars_nic_391419_j3w9t_collab.ccu002_06_gdppr_dars_nic_391419_j3w9t WHERE (CODE IN (SELECT code FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists WHERE (group_name_cov = '" + codelist + "' OR cov_composite = '" + codelist + "') and terminology='DMD'))) WHERE (DATE<'" + index_date + "' AND DATE>=date_sub('" + index_date + "',90))")
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT (*) FROM global_temp.ccu002_06_cov_dose1_dmd_diabetes LIMIT 10
+
+# COMMAND ----------
+
+# MAGIC %md ### Combined
+
+# COMMAND ----------
+
+for codelist in medhistory:
+   sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_" + codelist + " AS SELECT DISTINCT NHS_NUMBER_DEID, 1 AS cov_dose1_" + codelist + " FROM (SELECT NHS_NUMBER_DEID FROM global_temp.ccu002_06_cov_dose1_hesapc_" + codelist + " UNION ALL SELECT NHS_NUMBER_DEID FROM global_temp.ccu002_06_cov_dose1_sus_" + codelist + " UNION ALL SELECT NHS_NUMBER_DEID FROM global_temp.ccu002_06_cov_dose1_snomed_" + codelist + " UNION ALL SELECT NHS_NUMBER_DEID FROM global_temp.ccu002_06_cov_dose1_dmd_" + codelist + ") GROUP BY NHS_NUMBER_DEID")
+
+# COMMAND ----------
+
+# MAGIC %md ## COVID19 infection 
+
+# COMMAND ----------
+
+sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_prior_covid19 AS SELECT DISTINCT person_id_deid AS NHS_NUMBER_DEID, 1 AS cov_dose1_prior_covid19 FROM (SELECT person_id_deid, date FROM dars_nic_391419_j3w9t_collab.ccu002_06_ccu013_covid_trajectory WHERE covid_status='confirmed') WHERE date<'" + index_date + "' AND date>='2020-01-01'")
+
+# COMMAND ----------
+
+# MAGIC %md ## LSOA  
+
+# COMMAND ----------
+
+#sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_lsoa_nondistinct AS SELECT DISTINCT NHS_NUMBER_DEID, LSOA FROM (SELECT DISTINCT NHS_NUMBER_DEID, LSOA, DATE FROM dars_nic_391419_j3w9t_collab.ccu002_06_gdppr_dars_nic_391419_j3w9t) WHERE DATE<'" + index_date + "'")
+
+# COMMAND ----------
+
+#%sql
+#CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_lsoa AS
+#SELECT DISTINCT NHS_NUMBER_DEID, LSOA AS cov_dose1_lsoa
+#FROM global_temp.ccu002_06_cov_dose1_lsoa_nondistinct
+#WHERE NHS_NUMBER_DEID IN (SELECT NHS_NUMBER_DEID
+#                          FROM (SELECT count(NHS_NUMBER_DEID) AS Records_per_Patient, NHS_NUMBER_DEID
+#                                FROM global_temp.ccu002_06_cov_dose1_lsoa_nondistinct
+#                                GROUP BY NHS_NUMBER_DEID)
+#                          WHERE Records_per_Patient = 1)
+
+# COMMAND ----------
+
+sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_lsoa_nondistinct AS SELECT DISTINCT NHS_NUMBER_DEID, LSOA, DATE FROM (SELECT DISTINCT NHS_NUMBER_DEID, LSOA, DATE FROM dars_nic_391419_j3w9t_collab.ccu002_06_gdppr_dars_nic_391419_j3w9t) WHERE DATE<'" + index_date + "'")
+
+# COMMAND ----------
+
+sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_lsoa_nondistinct_nonull AS SELECT * FROM global_temp.ccu002_06_cov_dose1_lsoa_nondistinct WHERE LSOA IS NOT NULL")
+
+# COMMAND ----------
+
+sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_lsoa_nondistinct_nonull_maxdate AS SELECT NHS_NUMBER_DEID, MAX(DATE) AS DATE FROM global_temp.ccu002_06_cov_dose1_lsoa_nondistinct_nonull GROUP BY NHS_NUMBER_DEID")
+
+# COMMAND ----------
+
+sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_lsoa_nondistinct_latest AS SELECT DISTINCT NHS_NUMBER_DEID, LSOA, DATE FROM (SELECT first.NHS_NUMBER_DEID, first.LSOA, first.DATE FROM global_temp.ccu002_06_cov_dose1_lsoa_nondistinct_nonull AS first INNER JOIN global_temp.ccu002_06_cov_dose1_lsoa_nondistinct_nonull_maxdate AS second ON (first.NHS_NUMBER_DEID=second.NHS_NUMBER_DEID AND first.DATE=second.DATE))")
+
+# COMMAND ----------
+
+#REMOVE IDS WITH CONFLICTING LSOAS ON LATEST DATE TO GIVE FINAL DATASET
+
+#GET ID LIST
+sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_lsoa_nd_latest_ties AS SELECT DISTINCT NHS_NUMBER_DEID FROM (SELECT COUNT(NHS_NUMBER_DEID) AS Records_per_patient, NHS_NUMBER_DEID FROM global_temp.ccu002_06_cov_dose1_lsoa_nondistinct_latest GROUP BY NHS_NUMBER_DEID) WHERE Records_per_patient>1")
+
+#EXCLUDE THESE IDS
+sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_lsoa AS SELECT DISTINCT NHS_NUMBER_DEID, LSOA AS cov_dose1_lsoa FROM (SELECT first.NHS_NUMBER_DEID, first.LSOA, first.DATE FROM global_temp.ccu002_06_cov_dose1_lsoa_nondistinct_latest AS first ANTI JOIN global_temp.ccu002_06_cov_dose1_lsoa_nd_latest_ties AS second ON first.NHS_NUMBER_DEID=second.NHS_NUMBER_DEID)")
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT (*) FROM global_temp.ccu002_06_cov_dose1_lsoa
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT(DISTINCT NHS_NUMBER_DEID) FROM global_temp.ccu002_06_cov_dose1_lsoa
+
+# COMMAND ----------
+
+# MAGIC %md ## Region name
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_region AS
+# MAGIC SELECT DISTINCT lsoa_code AS LSOA, region_name AS cov_dose1_region
+# MAGIC FROM dars_nic_391419_j3w9t_collab.ccu002_06_lsoa_region_lookup
+
+# COMMAND ----------
+
+# MAGIC %md ## Index of Multiple Deprivation
+
+# COMMAND ----------
+
+# MAGIC %sql 
+# MAGIC CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_deprivation AS
+# MAGIC SELECT LSOA_CODE_2011 AS LSOA,
+# MAGIC        CASE WHEN DECI_IMD IS NULL THEN 'missing' 
+# MAGIC             WHEN DECI_IMD=1 OR DECI_IMD=2 THEN 'Deciles_1_2'
+# MAGIC             WHEN DECI_IMD=3 OR DECI_IMD=4 THEN 'Deciles_3_4'
+# MAGIC             WHEN DECI_IMD=5 OR DECI_IMD=6 THEN 'Deciles_5_6'
+# MAGIC             WHEN DECI_IMD=7 OR DECI_IMD=8 THEN 'Deciles_7_8'
+# MAGIC             WHEN DECI_IMD=9 OR DECI_IMD=10 THEN 'Deciles_9_10' END AS cov_dose1_deprivation
+# MAGIC FROM (SELECT DISTINCT LSOA_CODE_2011, DECI_IMD
+# MAGIC       FROM dss_corporate.english_indices_of_dep_v02
+# MAGIC       WHERE LSOA_CODE_2011 IN (SELECT LSOA FROM dars_nic_391419_j3w9t_collab.ccu002_06_gdppr_dars_nic_391419_j3w9t)
+# MAGIC         AND LSOA_CODE_2011 IS NOT NULL
+# MAGIC         AND IMD IS NOT NULL
+# MAGIC         AND IMD_YEAR = '2019')
+
+# COMMAND ----------
+
+# MAGIC %md ## Smoking Status 
+
+# COMMAND ----------
+
+spark.sql(f"""
+create or replace global temp view {project_prefix}smokingstatus_SNOMED as
+select *
+from {collab_database_name}.{project_prefix}{codelist_table}
+where name in ('Current-smoker','Never-smoker','Ex-smoker')
+""")
+
+# COMMAND ----------
+
+spark.sql(f"""
+CREATE OR REPLACE GLOBAL TEMP VIEW {project_prefix}covariates_smoking as
+
+SELECT tab2.NHS_NUMBER_DEID, tab2.DATE, tab2.code, tab1.name, tab1.terminology, tab1.term
+FROM  global_temp.{project_prefix}smokingstatus_SNOMED tab1
+inner join {collab_database_name}.{project_prefix}{gdppr_data} tab2 on tab1.code= tab2.code
+WHERE DATE < '{index_date}'
+""")
+
+# COMMAND ----------
+
+spark.sql(f"""
+CREATE OR REPLACE GLOBAL TEMP VIEW {project_prefix}covariates_smoking_final as
+
+with cte_latest as ( 
+select * from (
+    select NHS_NUMBER_DEID, DATE, code, term, name,
+        row_number() over(partition by NHS_NUMBER_DEID order by DATE desc) as rn
+    from
+        global_temp.{project_prefix}covariates_smoking
+) t
+where t.rn = 1
+)
+
+select NHS_NUMBER_DEID, name as smoking_status
+FROM cte_latest
+""")
+
+# COMMAND ----------
+
+df_smoking = spark.table(f"global_temp.{project_prefix}covariates_smoking_final")
+df_smoking = df_smoking.dropDuplicates()
+df_smoking.createOrReplaceGlobalTempView(f"{project_prefix}cov_dose1_smoking_final")
+
+# COMMAND ----------
+
+# MAGIC %md ## Number of unique diseases
+
+# COMMAND ----------
+
+df1 = gdppr.select(["LSOA", "NHS_NUMBER_DEID", "RECORD_DATE", "CODE"]).filter(gdppr["RECORD_DATE"].isNotNull())
+#display(df1)
+
+# COMMAND ----------
+
+#Lookup obtained from running notebook in functions folder called 'get_children'
+
+df2= spark.sql("select * from dars_nic_391419_j3w9t_collab.ccu002_vac_disorder_lookup_full") 
+
+df2=df2.select("CONCEPT_ID")
+
+# COMMAND ----------
+
+df = df1.join(df2, df1['code']==df2['CONCEPT_ID'], how='inner')
+#df.show()
+
+# COMMAND ----------
+
+df = df.filter(df.RECORD_DATE >= date_add(to_date(lit(index_date)),-365)).filter(df.RECORD_DATE < to_date(lit(index_date))).select("NHS_NUMBER_DEID", "RECORD_DATE", "CONCEPT_ID").dropDuplicates()
+#display(df)
+
+# COMMAND ----------
+
+df.createOrReplaceGlobalTempView(f"{project_prefix}sense_check_df")
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC SELECT (*) FROM global_temp.ccu002_06_sense_check_df LIMIT 10
+
+# COMMAND ----------
+
+df_disorder = df.groupBy("NHS_NUMBER_DEID").agg(f.countDistinct("CONCEPT_ID").alias("N_DISORDER"))
+#display(df_disorder)
+
+#This could either be count distinct record_date or count distinct concept_id, Ive gone with conceptID because googledoc says number of unique codes over the last year (rather than consultations)
+
+# COMMAND ----------
+
+df_disorder= df_disorder.dropDuplicates()
+#df_disorder = df_disorder.withColumnRenamed('NHS_NUMBER_DEID', 'ID')
+df_disorder.createOrReplaceGlobalTempView(f"{project_prefix}cov_dose1_disorders")
+
+# COMMAND ----------
+
+# MAGIC %md ## Major Surgery
+
+# COMMAND ----------
+
+# codelist
+surgery_opertn_codelist = [chr(i) for i in range(ord('A'),ord('U'))] + [chr(i) for i in range(ord('V'),ord('X'))]
+
+# COMMAND ----------
+
+# ["%,X%", "X%"]
+surgery_opertn_codelist_firstposition = ['%,'+ code + '%' for code in surgery_opertn_codelist] + [code + '%' for code in surgery_opertn_codelist]
+
+# COMMAND ----------
+
+ hes_ever = hes_apc.withColumnRenamed('PERSON_ID_DEID', 'ID').select(['ID', "EPISTART", "OPERTN_3_CONCAT"]).filter(col("EPISTART") < index_date).filter(col("EPISTART") >= date_add(to_date(lit(index_date)),-365))
+df_surgery = hes_ever.where(
+    reduce(lambda a, b: a|b, (hes_ever['OPERTN_3_CONCAT'].like(code) for code in surgery_opertn_codelist_firstposition))  
+).select(["ID", "EPISTART", "OPERTN_3_CONCAT"]).withColumn("SURGERY_LASTYR_HES", lit(1))
+
+# COMMAND ----------
+
+df_surgery= df_surgery.dropDuplicates()
+df_surgery = df_surgery.select("ID", "SURGERY_LASTYR_HES")
+df_surgery= df_surgery.dropDuplicates()
+df_surgery.createOrReplaceGlobalTempView(f"{project_prefix}cov_dose1_surgery")
+
+# COMMAND ----------
+
+# MAGIC %md ## Prior Medication 
+
+# COMMAND ----------
+
+medication=['antiplatelet','bp_lowering','lipid_lowering','anticoagulant','cocp','hrt']
+
+# COMMAND ----------
+
+for codelist in medication:
+  sql("CREATE OR REPLACE GLOBAL TEMP VIEW ccu002_06_cov_dose1_meds_" + codelist + " AS SELECT DISTINCT person_id_deid, 1 AS " + codelist + " FROM dars_nic_391419_j3w9t_collab.ccu002_06_primary_care_meds_dars_nic_391419_j3w9t WHERE PrescribedBNFCode IN (SELECT code FROM dars_nic_391419_j3w9t_collab.ccu002_06_codelists WHERE name='" + codelist + "' AND TERMINOLOGY='BNF') AND (ProcessingPeriodDate < '" + index_date + "' AND ProcessingPeriodDate >=date_sub('" + index_date + "',90))")
+
+# COMMAND ----------
+
+# MAGIC %md ## Save as tables 
+
+# COMMAND ----------
+
+covariates = ["ami","diabetes","depression","bmi_obesity","cancer","copd","ckd","liver_disease","dementia","stroke_all","all_vte","thrombophilia","prior_covid19","lsoa","region","deprivation","meds_antiplatelet","meds_bp_lowering","meds_lipid_lowering","meds_anticoagulant","meds_cocp","meds_hrt","smoking_final","disorders","surgery","cov_venous","cov_arterial"]
+
+# COMMAND ----------
+
+for codelist in covariates:
+  drop_table('ccu002_06_cov_dose1_'+codelist)
+
+# COMMAND ----------
+
+for codelist in covariates:
+  create_table('ccu002_06_cov_dose1_'+codelist)
