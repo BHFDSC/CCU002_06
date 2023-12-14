@@ -1,0 +1,777 @@
+# Databricks notebook source
+# MAGIC %md # CCU002_06-D13-cohort_3mil_newvac
+# MAGIC
+# MAGIC **Description** This notebook makes the analysis datasets.
+# MAGIC
+# MAGIC **Last edited** 20/07/23
+# MAGIC
+# MAGIC **Author(s)** Venexia Walker, Sam Ip, Spencer Keene; Updated by: Teri North
+# MAGIC
+# MAGIC **Notes** Edited from ccu002_06-D13-cohort_3mil to include updated dose 2 and booster outcomes and covariates
+
+# COMMAND ----------
+
+# MAGIC %md ## Clear cache
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CLEAR CACHE
+
+# COMMAND ----------
+
+# MAGIC %md ## Define functions
+
+# COMMAND ----------
+
+# Define create table function by Sam Hollings
+# Source: Workspaces/dars_nic_391419_j3w9t_collab/DATA_CURATION_wrang000_functions
+
+#def create_table(table_name:str, database_name:str='dars_nic_391419_j3w9t_collab', select_sql_script:str=None) -> None:
+#  """Will save to table from a global_temp view of the same name as the supplied table name (if no SQL script is supplied)
+#  Otherwise, can supply a SQL script and this will be used to make the table with the specificed name, in the specifcied database."""
+  
+#  spark.conf.set("spark.sql.legacy.allowCreatingManagedTableUsingNonemptyLocation","true")
+  
+#  if select_sql_script is None:
+#    select_sql_script = f"SELECT * FROM global_temp.{table_name}"
+  
+#  spark.sql(f"""CREATE TABLE {database_name}.{table_name} AS
+#                {select_sql_script}
+#             """)
+#  spark.sql(f"ALTER TABLE {database_name}.{table_name} OWNER TO {database_name}")
+  
+#def drop_table(table_name:str, database_name:str='dars_nic_391419_j3w9t_collab', if_exists=True):
+#  if if_exists:
+#    IF_EXISTS = 'IF EXISTS'
+#  else: 
+#    IF_EXISTS = ''
+#  spark.sql(f"DROP TABLE {IF_EXISTS} {database_name}.{table_name}")
+
+# COMMAND ----------
+
+def drop_create_table(table_name:str, save2database_name:str='dsa_391419_j3w9t_collab'):
+    sql(f"""DROP TABLE IF EXISTS {save2database_name}.{table_name}""")
+    sql(f"""CREATE TABLE {save2database_name}.{table_name} AS SELECT * FROM {table_name} """)
+
+# COMMAND ----------
+
+# MAGIC %md ## Quick data check before cohort creation 
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT (*) FROM dars_nic_391419_j3w9t_collab.ccu002_06_vaccination_3mil
+# MAGIC WHERE (vaccination_dose2_date IS NOT NULL) AND (vaccination_dose2_product IS NULL) AND (vaccination_conflicted is null)
+
+# COMMAND ----------
+
+# MAGIC %md ## Apply exclusions and create a cohort spine
+
+# COMMAND ----------
+
+# MAGIC %md ### Note: some exclusions have been applied in previous notebooks but repeated here for completeness 
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_exclusion_cohort_spine_input AS
+# MAGIC SELECT FLOOR(RAND()*10)+1 AS CHUNK, -- CHUNK divides the data into parts for import into R
+# MAGIC        cohort.NHS_NUMBER_DEID,
+# MAGIC        
+# MAGIC        --vaccination covariates
+# MAGIC        vaccination.vaccination_dose1_date,
+# MAGIC        vaccination.vaccination_dose1_product,
+# MAGIC        vaccination.vaccination_dose1_situation,
+# MAGIC        vaccination.vaccination_dose2_date,
+# MAGIC        vaccination.vaccination_dose2_product,
+# MAGIC        vaccination.vaccination_dose2_situation,
+# MAGIC        vaccination.vaccination_dose3_date,
+# MAGIC        vaccination.vaccination_dose3_product,
+# MAGIC        vaccination.vaccination_dose3_situation,
+# MAGIC        vaccination.vaccination_dose_booster_date,       
+# MAGIC        vaccination.vaccination_dose_booster_product,
+# MAGIC        vaccination.vaccination_dose_booster_situation,
+# MAGIC        CASE WHEN vaccination.vaccination_conflicted=1 THEN 1 ELSE 0 END AS vaccination_conflicted,
+# MAGIC        
+# MAGIC        -- dose 1 covariates
+# MAGIC        FLOOR(DATEDIFF('2020-12-08', cohort.DATE_OF_BIRTH)/365.25) AS cov_dose1_age,
+# MAGIC        cohort.SEX AS cov_dose1_sex,
+# MAGIC        CASE WHEN cohort.CATEGORISED_ETHNICITY IS NULL THEN 'missing' ELSE cohort.CATEGORISED_ETHNICITY END AS cov_dose1_ethnicity,
+# MAGIC        cov_dose1_lsoa.cov_dose1_lsoa,
+# MAGIC        cov_dose1_region.cov_dose1_region,
+# MAGIC        cov_dose1_deprivation.cov_dose1_deprivation,
+# MAGIC               
+# MAGIC         -- dose 2 covariates
+# MAGIC        FLOOR(DATEDIFF(vaccination.vaccination_dose1_date, cohort.DATE_OF_BIRTH)/365.25) AS cov_dose2_age,
+# MAGIC        cohort.SEX AS cov_dose2_sex,
+# MAGIC        CASE WHEN cohort.CATEGORISED_ETHNICITY IS NULL THEN 'missing' ELSE cohort.CATEGORISED_ETHNICITY END AS cov_dose2_ethnicity,
+# MAGIC        cov_dose2_lsoa.cov_dose2_lsoa,
+# MAGIC        cov_dose2_region.cov_dose2_region,
+# MAGIC        cov_dose2_deprivation.cov_dose2_deprivation,
+# MAGIC        
+# MAGIC        -- booster covariates
+# MAGIC        FLOOR(DATEDIFF(vaccination.vaccination_dose2_date, cohort.DATE_OF_BIRTH)/365.25) AS cov_booster_age,
+# MAGIC        cohort.SEX AS cov_booster_sex,
+# MAGIC        CASE WHEN cohort.CATEGORISED_ETHNICITY IS NULL THEN 'missing' ELSE cohort.CATEGORISED_ETHNICITY END AS cov_booster_ethnicity,
+# MAGIC        cov_booster_lsoa.cov_booster_lsoa,
+# MAGIC        cov_booster_region.cov_booster_region,
+# MAGIC        cov_booster_deprivation.cov_booster_deprivation,
+# MAGIC        
+# MAGIC        -- outcomes
+# MAGIC        cohort.DATE_OF_DEATH AS out_death
+# MAGIC
+# MAGIC
+# MAGIC FROM dars_nic_391419_j3w9t_collab.ccu002_06_included_patients AS cohort
+# MAGIC
+# MAGIC --vaccination dataset
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_vaccination_3mil AS vaccination ON cohort.NHS_NUMBER_DEID = vaccination.NHS_NUMBER_DEID
+# MAGIC
+# MAGIC --dose 1 covariate datasets
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_lsoa AS cov_dose1_lsoa ON cohort.NHS_NUMBER_DEID = cov_dose1_lsoa.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_region AS cov_dose1_region ON cov_dose1_lsoa.cov_dose1_lsoa = cov_dose1_region.LSOA
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_deprivation AS cov_dose1_deprivation ON cov_dose1_lsoa.cov_dose1_lsoa = cov_dose1_deprivation.LSOA
+# MAGIC
+# MAGIC --dose 2 covariate datasets
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_lsoa AS cov_dose2_lsoa ON cohort.NHS_NUMBER_DEID = cov_dose2_lsoa.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_region AS cov_dose2_region ON cov_dose2_lsoa.cov_dose2_lsoa = cov_dose2_region.LSOA
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_deprivation AS cov_dose2_deprivation ON cov_dose2_lsoa.cov_dose2_lsoa = cov_dose2_deprivation.LSOA
+# MAGIC
+# MAGIC --booster covariate datasets
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_lsoa AS cov_booster_lsoa ON cohort.NHS_NUMBER_DEID = cov_booster_lsoa.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_region AS cov_booster_region ON cov_booster_lsoa.cov_booster_lsoa = cov_booster_region.LSOA
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_deprivation AS cov_booster_deprivation ON cov_booster_lsoa.cov_booster_lsoa = cov_booster_deprivation.LSOA
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_exclusion_cohort_spine_output AS
+# MAGIC SELECT *
+# MAGIC FROM ccu002_06_exclusion_cohort_spine_input 
+# MAGIC
+# MAGIC -- Remove people listed as neither 'male' or 'female'
+# MAGIC WHERE ((cov_dose1_sex=1) OR (cov_dose1_sex=2))
+# MAGIC
+# MAGIC -- Remove people not aged between 18 and 110 inclusive
+# MAGIC AND (cov_dose1_age>=18 AND cov_dose1_age<111 AND (cov_dose1_age IS NOT NULL)) 
+# MAGIC AND ((cov_dose2_age>=cov_dose1_age AND (cov_dose1_age IS NOT NULL) AND (cov_dose2_age IS NOT NULL)) OR (cov_dose2_age IS NULL))
+# MAGIC AND ((cov_booster_age>=cov_dose2_age AND (cov_booster_age IS NOT NULL) AND (cov_dose2_age IS NOT NULL)) OR (cov_booster_age IS NULL))
+# MAGIC
+# MAGIC -- Remove people vaccinated before the UK vaccination program began
+# MAGIC AND ((vaccination_dose1_date IS NULL) OR ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose1_date>='2020-12-08'))) 
+# MAGIC AND ((vaccination_dose2_date IS NULL) OR ((vaccination_dose2_date IS NOT NULL) AND (vaccination_dose2_date>='2020-12-08')))
+# MAGIC AND ((vaccination_dose_booster_date IS NULL) OR ((vaccination_dose_booster_date IS NOT NULL) AND (vaccination_dose_booster_date>='2020-12-08')))
+# MAGIC
+# MAGIC -- Remove people who died before the UK vaccination program began
+# MAGIC AND ((out_death IS NULL) OR ((out_death IS NOT NULL) AND (out_death>='2020-12-08'))) 
+# MAGIC
+# MAGIC -- Remove people not from England
+# MAGIC AND ((cov_dose1_lsoa IS NULL) OR (LEFT(cov_dose1_lsoa,1)=="E"))
+# MAGIC AND ((cov_dose2_lsoa IS NULL) OR (LEFT(cov_dose2_lsoa,1)=="E"))
+# MAGIC AND ((cov_booster_lsoa IS NULL) OR (LEFT(cov_booster_lsoa,1)=="E"))
+# MAGIC
+# MAGIC --Remove individuals with a second vaccination but no first vaccination
+# MAGIC --Remove individuals with a booster vaccination but no first and second vaccination 
+# MAGIC AND (((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND (vaccination_dose_booster_date IS NOT NULL)) OR ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND (vaccination_dose_booster_date IS NULL)) OR ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NULL) AND (vaccination_dose_booster_date IS NULL)) OR ((vaccination_dose1_date IS NULL) AND (vaccination_dose2_date IS NULL) AND (vaccination_dose_booster_date IS NULL)))
+# MAGIC --Remove individuals with a third vaccination but no first and second vaccination 
+# MAGIC AND (((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND (vaccination_dose3_date IS NOT NULL)) OR ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND (vaccination_dose3_date IS NULL)) OR ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NULL) AND (vaccination_dose3_date IS NULL)) OR ((vaccination_dose1_date IS NULL) AND (vaccination_dose2_date IS NULL) AND (vaccination_dose3_date IS NULL)))
+# MAGIC
+# MAGIC -- Remove individuals whose second dose is before their first dose
+# MAGIC AND (((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND (vaccination_dose1_date < vaccination_dose2_date)) OR (vaccination_dose1_date IS NULL) OR (vaccination_dose2_date IS NULL))
+# MAGIC -- Remove individuals whose booster dose is before their first or second dose 
+# MAGIC AND (((vaccination_dose2_date IS NOT NULL) AND (vaccination_dose_booster_date IS NOT NULL) AND (vaccination_dose2_date < vaccination_dose_booster_date)) OR (vaccination_dose2_date IS NULL) OR (vaccination_dose_booster_date IS NULL))
+# MAGIC AND (((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose_booster_date IS NOT NULL) AND (vaccination_dose1_date < vaccination_dose_booster_date)) OR (vaccination_dose1_date IS NULL) OR (vaccination_dose_booster_date IS NULL))
+# MAGIC --Remove individuals whose third dose is before their first or second dose 
+# MAGIC AND (((vaccination_dose2_date IS NOT NULL) AND (vaccination_dose3_date IS NOT NULL) AND (vaccination_dose2_date < vaccination_dose3_date)) OR (vaccination_dose2_date IS NULL) OR (vaccination_dose3_date IS NULL))
+# MAGIC AND (((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose3_date IS NOT NULL) AND (vaccination_dose1_date < vaccination_dose3_date)) OR (vaccination_dose1_date IS NULL) OR (vaccination_dose3_date IS NULL))
+# MAGIC
+# MAGIC
+# MAGIC -- Remove individuals whose second dose is less than 3 weeks after their first dose
+# MAGIC AND (((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND DATEDIFF(vaccination_dose2_date, vaccination_dose1_date)>=21) OR (vaccination_dose1_date IS NULL) OR (vaccination_dose2_date IS NULL))
+# MAGIC
+# MAGIC --Remove individuals whose booster dose is less than 3 months (90 days) after their second dose
+# MAGIC AND (((vaccination_dose2_date IS NOT NULL) AND (vaccination_dose_booster_date IS NOT NULL) AND DATEDIFF(vaccination_dose_booster_date, vaccination_dose2_date)>=90) OR (vaccination_dose2_date IS NULL) OR (vaccination_dose_booster_date IS NULL))
+# MAGIC
+# MAGIC -- Remove individuals with mixed vaccine products before 7 May 2021
+# MAGIC AND (((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND ((vaccination_dose1_product=vaccination_dose2_product) OR (vaccination_dose1_product!=vaccination_dose2_product AND vaccination_dose2_date>'2021-05-07'))) OR (vaccination_dose1_date IS NULL) OR (vaccination_dose2_date IS NULL))
+# MAGIC
+# MAGIC -- Remove individuals with conflicted vaccination record
+# MAGIC AND (vaccination_conflicted=0)
+# MAGIC
+# MAGIC -- Remove indiviuduals with a situation attached to any vaccination
+# MAGIC AND ((vaccination_dose1_situation IS NULL) AND (vaccination_dose2_situation IS NULL) AND (vaccination_dose_booster_situation IS NULL) AND (vaccination_dose3_situation IS NULL))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT (*) FROM ccu002_06_exclusion_cohort_spine_output
+# MAGIC -- 45,673,956
+
+# COMMAND ----------
+
+# MAGIC %md ## Enumerate exclusion categories 
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_enumerate AS
+# MAGIC
+# MAGIC SELECT SUM(CASE WHEN (cov_dose1_sex!=1 AND cov_dose1_sex!=2) THEN 1 ELSE 0 END) AS enumerate_sex,
+# MAGIC   SUM(CASE WHEN (cov_dose1_age<18 OR cov_dose1_age>=111 OR cov_dose1_age IS NULL) THEN 1 ELSE 0 END) as enumerate_age_dose1,
+# MAGIC   SUM(CASE WHEN (cov_dose2_age<cov_dose1_age AND (cov_dose1_age IS NOT NULL) AND (cov_dose2_age IS NOT NULL)) THEN 1 ELSE 0 END) as enumerate_age_dose2,
+# MAGIC   SUM(CASE WHEN (cov_booster_age<cov_dose2_age AND (cov_dose2_age IS NOT NULL) AND (cov_booster_age IS NOT NULL)) THEN 1 ELSE 0 END) as enumerate_age_booster,
+# MAGIC   SUM(CASE WHEN ((vaccination_dose1_date IS NOT NULL) AND vaccination_dose1_date<'2020-12-08') THEN 1 ELSE 0 END) as enumerate_vac_dose1,
+# MAGIC   SUM(CASE WHEN ((vaccination_dose2_date IS NOT NULL) AND vaccination_dose2_date<'2020-12-08') THEN 1 ELSE 0 END) as enumerate_vac_dose2,
+# MAGIC   SUM(CASE WHEN ((vaccination_dose_booster_date IS NOT NULL) AND vaccination_dose_booster_date<'2020-12-08') THEN 1 ELSE 0 END) as enumerate_vac_booster,
+# MAGIC   SUM(CASE WHEN ((out_death IS NOT NULL) AND out_death<'2020-12-08') THEN 1 ELSE 0 END) as enumerate_death_pre_vacprog,
+# MAGIC   SUM(CASE WHEN ((cov_dose1_lsoa IS NOT NULL) AND (LEFT(cov_dose1_lsoa,1)!="E")) THEN 1 ELSE 0 END) as enumerate_dose1_lsoa,
+# MAGIC   SUM(CASE WHEN ((cov_dose2_lsoa IS NOT NULL) AND (LEFT(cov_dose2_lsoa,1)!="E")) THEN 1 ELSE 0 END) as enumerate_dose2_lsoa,
+# MAGIC   SUM(CASE WHEN ((cov_booster_lsoa IS NOT NULL) AND (LEFT(cov_booster_lsoa,1)!="E")) THEN 1 ELSE 0 END) as enumerate_booster_lsoa,
+# MAGIC   SUM(CASE WHEN ((vaccination_dose1_date IS NULL) AND (vaccination_dose2_date IS NOT NULL)) THEN 1 ELSE 0 END) as enumerate_dose1_miss,
+# MAGIC   SUM(CASE WHEN (((vaccination_dose1_date IS NULL) OR (vaccination_dose2_date IS NULL)) AND (vaccination_dose_booster_date IS NOT NULL)) THEN 1 ELSE 0 END) as enumerate_dose1dose2boost_miss,
+# MAGIC   SUM(CASE WHEN (((vaccination_dose1_date IS NULL) OR (vaccination_dose2_date IS NULL)) AND (vaccination_dose3_date IS NOT NULL)) THEN 1 ELSE 0 END) as enumerate_dose1dose2dose3_miss,
+# MAGIC   SUM(CASE WHEN ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND (vaccination_dose1_date>=vaccination_dose2_date)) THEN 1 ELSE 0 END) as enumerate_ord_dose1dose2,
+# MAGIC   SUM(CASE WHEN ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose_booster_date IS NOT NULL) AND (vaccination_dose1_date>=vaccination_dose_booster_date)) THEN 1 ELSE 0 END) as enumerate_ord_dose1boost,
+# MAGIC   SUM(CASE WHEN ((vaccination_dose2_date IS NOT NULL) AND (vaccination_dose_booster_date IS NOT NULL) AND (vaccination_dose2_date>=vaccination_dose_booster_date)) THEN 1 ELSE 0 END) as enumerate_ord_dose2boost,
+# MAGIC   SUM(CASE WHEN ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose3_date IS NOT NULL) AND (vaccination_dose1_date>=vaccination_dose3_date)) THEN 1 ELSE 0 END) as enumerate_ord_dose1dose3,
+# MAGIC   SUM(CASE WHEN ((vaccination_dose2_date IS NOT NULL) AND (vaccination_dose3_date IS NOT NULL) AND (vaccination_dose2_date>=vaccination_dose3_date)) THEN 1 ELSE 0 END) as enumerate_ord_dose2dose3,
+# MAGIC   SUM(CASE WHEN ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND (DATEDIFF(vaccination_dose2_date,vaccination_dose1_date)<21)) THEN 1 ELSE 0 END) as enumerate_dose1dose2_3weeks,
+# MAGIC   SUM(CASE WHEN ((vaccination_dose2_date IS NOT NULL) AND (vaccination_dose_booster_date IS NOT NULL) AND (DATEDIFF(vaccination_dose_booster_date,vaccination_dose2_date)<90)) THEN 1 ELSE 0 END) as enumerate_dose2boost_90days,
+# MAGIC   SUM(CASE WHEN ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND (vaccination_dose1_product!=vaccination_dose2_product) AND (vaccination_dose2_date<='2021-05-07')) THEN 1 ELSE 0 END) as enumerate_dose1dose2mixed,
+# MAGIC   SUM(CASE WHEN ((vaccination_dose1_date IS NOT NULL) AND (vaccination_dose2_date IS NOT NULL) AND (vaccination_dose1_product IS NULL OR vaccination_dose2_product IS NULL)) THEN 1 ELSE 0 END) as enumerate_dose1dose2NULLmixed,
+# MAGIC   SUM(CASE WHEN (vaccination_conflicted!=0 OR (vaccination_conflicted IS NULL)) THEN 1 ELSE 0 END) as enumerate_vac_conflictedornull,
+# MAGIC   SUM(CASE WHEN ((vaccination_dose1_situation IS NOT NULL) OR (vaccination_dose2_situation IS NOT NULL) OR (vaccination_dose_booster_situation IS NOT NULL) OR (vaccination_dose3_situation IS NOT NULL)) THEN 1 ELSE 0 END) as enumerate_vac_situation  
+# MAGIC
+# MAGIC FROM ccu002_06_exclusion_cohort_spine_input
+
+# COMMAND ----------
+
+# MAGIC %md ## Make Dose 1 variables temporary views
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_dose1_cov AS
+# MAGIC SELECT cohort.CHUNK,
+# MAGIC        cohort.NHS_NUMBER_DEID,
+# MAGIC       
+# MAGIC        --dose 1 covariates
+# MAGIC        CASE WHEN cov_dose1_smoking_final.smoking_status IS NULL THEN 'missing' ELSE cov_dose1_smoking_final.smoking_status END AS cov_dose1_smoking_status,
+# MAGIC        CASE WHEN (cov_dose1_prior_covid19.cov_dose1_prior_covid19=1) THEN 1 ELSE 0 END AS cov_dose1_prior_covid19,
+# MAGIC        CASE WHEN cov_dose1_disorders.N_DISORDER IS NULL THEN 0 ELSE cov_dose1_disorders.N_DISORDER END AS cov_dose1_disorders,
+# MAGIC        CASE WHEN cov_dose1_surgery.SURGERY_LASTYR_HES IS NULL THEN 0 ELSE cov_dose1_surgery.SURGERY_LASTYR_HES END AS cov_dose1_surgery,
+# MAGIC        
+# MAGIC        
+# MAGIC        CASE WHEN (cov_dose1_ami.cov_dose1_ami=1 ) THEN 1 ELSE 0 END AS cov_dose1_ami,
+# MAGIC        CASE WHEN (cov_dose1_diabetes.cov_dose1_diabetes=1 ) THEN 1 ELSE 0 END AS cov_dose1_diabetes,
+# MAGIC        CASE WHEN (cov_dose1_depression.cov_dose1_depression=1 ) THEN 1 ELSE 0 END AS cov_dose1_depression,
+# MAGIC        CASE WHEN (cov_dose1_bmi_obesity.cov_dose1_bmi_obesity=1 ) THEN 1 ELSE 0 END AS cov_dose1_bmi_obesity,
+# MAGIC        CASE WHEN (cov_dose1_cancer.cov_dose1_cancer=1 ) THEN 1 ELSE 0 END AS cov_dose1_cancer,
+# MAGIC        CASE WHEN (cov_dose1_copd.cov_dose1_copd=1 ) THEN 1 ELSE 0 END AS cov_dose1_copd,
+# MAGIC        CASE WHEN (cov_dose1_ckd.cov_dose1_ckd=1 ) THEN 1 ELSE 0 END AS cov_dose1_ckd,
+# MAGIC        CASE WHEN (cov_dose1_liver_disease.cov_dose1_liver_disease=1 ) THEN 1 ELSE 0 END AS cov_dose1_liver_disease,
+# MAGIC        CASE WHEN (cov_dose1_dementia.cov_dose1_dementia=1 ) THEN 1 ELSE 0 END AS cov_dose1_dementia,
+# MAGIC        CASE WHEN (cov_dose1_stroke_all.cov_dose1_stroke_all=1 ) THEN 1 ELSE 0 END AS cov_dose1_stroke_all,
+# MAGIC        CASE WHEN (cov_dose1_all_vte.cov_dose1_all_vte=1 ) THEN 1 ELSE 0 END AS cov_dose1_all_vte,
+# MAGIC        CASE WHEN (cov_dose1_thrombophilia.cov_dose1_thrombophilia=1 ) THEN 1 ELSE 0 END AS cov_dose1_thrombophilia,
+# MAGIC        CASE WHEN (cov_dose1_cov_arterial.cov_dose1_cov_arterial=1 ) THEN 1 ELSE 0 END AS cov_dose1_cov_arterial,
+# MAGIC        CASE WHEN (cov_dose1_cov_venous.cov_dose1_cov_venous=1 ) THEN 1 ELSE 0 END AS cov_dose1_cov_venous,
+# MAGIC        
+# MAGIC        
+# MAGIC        CASE WHEN (cov_dose1_meds_antiplatelet.antiplatelet=1) THEN 1 ELSE 0 END AS cov_dose1_meds_antiplatelet,
+# MAGIC        CASE WHEN (cov_dose1_meds_bp_lowering.bp_lowering=1) THEN 1 ELSE 0 END AS cov_dose1_meds_bp_lowering,
+# MAGIC        CASE WHEN (cov_dose1_meds_lipid_lowering.lipid_lowering=1) THEN 1 ELSE 0 END AS cov_dose1_meds_lipid_lowering,
+# MAGIC        CASE WHEN (cov_dose1_meds_anticoagulant.anticoagulant=1) THEN 1 ELSE 0 END AS cov_dose1_meds_anticoagulant,
+# MAGIC        CASE WHEN (cov_dose1_meds_cocp.cocp=1) THEN 1 ELSE 0 END AS cov_dose1_meds_cocp,
+# MAGIC        CASE WHEN (cov_dose1_meds_hrt.hrt=1) THEN 1 ELSE 0 END AS cov_dose1_meds_hrt
+# MAGIC              
+# MAGIC        
+# MAGIC
+# MAGIC FROM ccu002_06_exclusion_cohort_spine_output as cohort
+# MAGIC
+# MAGIC --dose 1 covariate datasets
+# MAGIC
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_smoking_final AS cov_dose1_smoking_final ON cohort.NHS_NUMBER_DEID = cov_dose1_smoking_final.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_prior_covid19 AS cov_dose1_prior_covid19 ON cohort.NHS_NUMBER_DEID = cov_dose1_prior_covid19.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_disorders AS cov_dose1_disorders ON cohort.NHS_NUMBER_DEID = cov_dose1_disorders.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_surgery AS cov_dose1_surgery ON cohort.NHS_NUMBER_DEID = cov_dose1_surgery.ID
+# MAGIC
+# MAGIC
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_ami AS cov_dose1_ami ON cohort.NHS_NUMBER_DEID = cov_dose1_ami.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_diabetes AS cov_dose1_diabetes ON cohort.NHS_NUMBER_DEID = cov_dose1_diabetes.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_depression AS cov_dose1_depression ON cohort.NHS_NUMBER_DEID = cov_dose1_depression.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_bmi_obesity AS cov_dose1_bmi_obesity ON cohort.NHS_NUMBER_DEID = cov_dose1_bmi_obesity.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_cancer AS cov_dose1_cancer ON cohort.NHS_NUMBER_DEID = cov_dose1_cancer.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_copd AS cov_dose1_copd ON cohort.NHS_NUMBER_DEID = cov_dose1_copd.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_ckd AS cov_dose1_ckd ON cohort.NHS_NUMBER_DEID = cov_dose1_ckd.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_liver_disease AS cov_dose1_liver_disease ON cohort.NHS_NUMBER_DEID = cov_dose1_liver_disease.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_dementia AS cov_dose1_dementia ON cohort.NHS_NUMBER_DEID = cov_dose1_dementia.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_stroke_all AS cov_dose1_stroke_all ON cohort.NHS_NUMBER_DEID = cov_dose1_stroke_all.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_all_vte AS cov_dose1_all_vte ON cohort.NHS_NUMBER_DEID = cov_dose1_all_vte.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_thrombophilia AS cov_dose1_thrombophilia ON cohort.NHS_NUMBER_DEID = cov_dose1_thrombophilia.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_cov_arterial AS cov_dose1_cov_arterial ON cohort.NHS_NUMBER_DEID = cov_dose1_cov_arterial.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_cov_venous AS cov_dose1_cov_venous ON cohort.NHS_NUMBER_DEID = cov_dose1_cov_venous.NHS_NUMBER_DEID
+# MAGIC
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_meds_antiplatelet AS cov_dose1_meds_antiplatelet ON cohort.NHS_NUMBER_DEID = cov_dose1_meds_antiplatelet.person_id_deid
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_meds_bp_lowering AS cov_dose1_meds_bp_lowering ON cohort.NHS_NUMBER_DEID = cov_dose1_meds_bp_lowering.person_id_deid
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_meds_lipid_lowering AS cov_dose1_meds_lipid_lowering ON cohort.NHS_NUMBER_DEID = cov_dose1_meds_lipid_lowering.person_id_deid
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_meds_anticoagulant AS cov_dose1_meds_anticoagulant ON cohort.NHS_NUMBER_DEID = cov_dose1_meds_anticoagulant.person_id_deid
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_meds_cocp AS cov_dose1_meds_cocp ON cohort.NHS_NUMBER_DEID = cov_dose1_meds_cocp.person_id_deid
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose1_meds_hrt AS cov_dose1_meds_hrt ON cohort.NHS_NUMBER_DEID = cov_dose1_meds_hrt.person_id_deid
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT (*) FROM ccu002_06_cohort_dose1_cov
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_dose1_out AS
+# MAGIC SELECT cohort.CHUNK,
+# MAGIC        cohort.NHS_NUMBER_DEID,
+# MAGIC        
+# MAGIC        -- dose 1 outcomes
+# MAGIC        out_dose1_any_AMI.out_dose1_any_AMI AS out_dose1_any_AMI,
+# MAGIC        out_dose1_any_stroke_isch.out_dose1_any_stroke_isch AS out_dose1_any_stroke_isch,
+# MAGIC        out_dose1_any_PE.out_dose1_any_PE AS out_dose1_any_PE,
+# MAGIC        out_dose1_any_DVT.out_dose1_any_DVT AS out_dose1_any_DVT,
+# MAGIC        out_dose1_any_ICVT.out_dose1_any_ICVT AS out_dose1_any_ICVT,
+# MAGIC        out_dose1_any_portal_vein_thrombosis.out_dose1_any_portal_vein_thrombosis AS out_dose1_any_portal_vein_thrombosis,
+# MAGIC        out_dose1_any_any_thrombocytopenia.out_dose1_any_any_thrombocytopenia AS out_dose1_any_any_thrombocytopenia,
+# MAGIC        out_dose1_any_stroke_SAH_HS.out_dose1_any_stroke_SAH_HS AS out_dose1_any_stroke_SAH_HS,
+# MAGIC        out_dose1_any_mesenteric_thrombus.out_dose1_any_mesenteric_thrombus AS out_dose1_any_mesenteric_thrombus,
+# MAGIC        out_dose1_any_myocarditis.out_dose1_any_myocarditis AS out_dose1_any_myocarditis,
+# MAGIC        out_dose1_any_pericarditis.out_dose1_any_pericarditis AS out_dose1_any_pericarditis,
+# MAGIC        out_dose1_any_arterial.out_dose1_any_arterial AS out_dose1_any_arterial,
+# MAGIC        out_dose1_any_venous.out_dose1_any_venous AS out_dose1_any_venous,
+# MAGIC        
+# MAGIC        out_dose1_first_AMI.out_dose1_first_AMI AS out_dose1_first_AMI,
+# MAGIC        out_dose1_first_stroke_isch.out_dose1_first_stroke_isch AS out_dose1_first_stroke_isch,
+# MAGIC        out_dose1_first_PE.out_dose1_first_PE AS out_dose1_first_PE,
+# MAGIC        out_dose1_first_DVT.out_dose1_first_DVT AS out_dose1_first_DVT,
+# MAGIC        out_dose1_first_ICVT.out_dose1_first_ICVT AS out_dose1_first_ICVT,
+# MAGIC        out_dose1_first_portal_vein_thrombosis.out_dose1_first_portal_vein_thrombosis AS out_dose1_first_portal_vein_thrombosis,
+# MAGIC        out_dose1_first_any_thrombocytopenia.out_dose1_first_any_thrombocytopenia AS out_dose1_first_any_thrombocytopenia,
+# MAGIC        out_dose1_first_stroke_SAH_HS.out_dose1_first_stroke_SAH_HS AS out_dose1_first_stroke_SAH_HS,
+# MAGIC        out_dose1_first_mesenteric_thrombus.out_dose1_first_mesenteric_thrombus AS out_dose1_first_mesenteric_thrombus,
+# MAGIC        out_dose1_first_myocarditis.out_dose1_first_myocarditis AS out_dose1_first_myocarditis,
+# MAGIC        out_dose1_first_pericarditis.out_dose1_first_pericarditis AS out_dose1_first_pericarditis,
+# MAGIC        out_dose1_first_arterial.out_dose1_first_arterial AS out_dose1_first_arterial,
+# MAGIC        out_dose1_first_venous.out_dose1_first_venous AS out_dose1_first_venous
+# MAGIC        
+# MAGIC  FROM ccu002_06_exclusion_cohort_spine_output as cohort
+# MAGIC  
+# MAGIC  --dose 1 outcome datasets
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_first_ami AS out_dose1_first_ami ON cohort.NHS_NUMBER_DEID = out_dose1_first_ami.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_first_stroke_isch AS out_dose1_first_stroke_isch ON cohort.NHS_NUMBER_DEID = out_dose1_first_stroke_isch.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_first_pe AS out_dose1_first_pe ON cohort.NHS_NUMBER_DEID = out_dose1_first_pe.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_first_dvt AS out_dose1_first_dvt ON cohort.NHS_NUMBER_DEID = out_dose1_first_dvt.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_first_icvt AS out_dose1_first_icvt ON cohort.NHS_NUMBER_DEID = out_dose1_first_icvt.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_first_portal_vein_thrombosis AS out_dose1_first_portal_vein_thrombosis ON cohort.NHS_NUMBER_DEID = out_dose1_first_portal_vein_thrombosis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_first_any_thrombocytopenia AS out_dose1_first_any_thrombocytopenia ON cohort.NHS_NUMBER_DEID = out_dose1_first_any_thrombocytopenia.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_first_stroke_sah_hs AS out_dose1_first_stroke_sah_hs ON cohort.NHS_NUMBER_DEID = out_dose1_first_stroke_sah_hs.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_first_mesenteric_thrombus AS out_dose1_first_mesenteric_thrombus ON cohort.NHS_NUMBER_DEID = out_dose1_first_mesenteric_thrombus.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_first_myocarditis AS out_dose1_first_myocarditis ON cohort.NHS_NUMBER_DEID = out_dose1_first_myocarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_first_pericarditis AS out_dose1_first_pericarditis ON cohort.NHS_NUMBER_DEID = out_dose1_first_pericarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_first_arterial AS out_dose1_first_arterial ON cohort.NHS_NUMBER_DEID = out_dose1_first_arterial.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_first_venous AS out_dose1_first_venous ON cohort.NHS_NUMBER_DEID = out_dose1_first_venous.NHS_NUMBER_DEID
+# MAGIC
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_any_ami AS out_dose1_any_ami ON cohort.NHS_NUMBER_DEID = out_dose1_any_ami.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_any_stroke_isch AS out_dose1_any_stroke_isch ON cohort.NHS_NUMBER_DEID = out_dose1_any_stroke_isch.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_any_pe AS out_dose1_any_pe ON cohort.NHS_NUMBER_DEID = out_dose1_any_pe.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_any_dvt AS out_dose1_any_dvt ON cohort.NHS_NUMBER_DEID = out_dose1_any_dvt.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_any_icvt AS out_dose1_any_icvt ON cohort.NHS_NUMBER_DEID = out_dose1_any_icvt.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_any_portal_vein_thrombosis AS out_dose1_any_portal_vein_thrombosis ON cohort.NHS_NUMBER_DEID = out_dose1_any_portal_vein_thrombosis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_any_any_thrombocytopenia AS out_dose1_any_any_thrombocytopenia ON cohort.NHS_NUMBER_DEID = out_dose1_any_any_thrombocytopenia.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_any_stroke_sah_hs AS out_dose1_any_stroke_sah_hs ON cohort.NHS_NUMBER_DEID = out_dose1_any_stroke_sah_hs.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_any_mesenteric_thrombus AS out_dose1_any_mesenteric_thrombus ON cohort.NHS_NUMBER_DEID = out_dose1_any_mesenteric_thrombus.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_any_myocarditis AS out_dose1_any_myocarditis ON cohort.NHS_NUMBER_DEID = out_dose1_any_myocarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_any_pericarditis AS out_dose1_any_pericarditis ON cohort.NHS_NUMBER_DEID = out_dose1_any_pericarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_any_arterial AS out_dose1_any_arterial ON cohort.NHS_NUMBER_DEID = out_dose1_any_arterial.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_out_dose1_any_venous AS out_dose1_any_venous ON cohort.NHS_NUMBER_DEID = out_dose1_any_venous.NHS_NUMBER_DEID
+# MAGIC        
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT (*) FROM ccu002_06_cohort_dose1_out
+
+# COMMAND ----------
+
+# MAGIC %md ## Make Dose 2 variables temporary views
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_dose2_cov AS
+# MAGIC SELECT cohort.CHUNK,
+# MAGIC        cohort.NHS_NUMBER_DEID,
+# MAGIC        
+# MAGIC        --dose 2 covariates
+# MAGIC        CASE WHEN cov_dose2_smoking_final.smoking_status IS NULL THEN 'missing' ELSE cov_dose2_smoking_final.smoking_status END AS cov_dose2_smoking_status,
+# MAGIC        CASE WHEN (cov_dose2_prior_covid19.cov_dose2_prior_covid19=1) THEN 1 ELSE 0 END AS cov_dose2_prior_covid19,
+# MAGIC        CASE WHEN cov_dose2_disorders.N_DISORDER IS NULL THEN 0 ELSE cov_dose2_disorders.N_DISORDER END AS cov_dose2_disorders,
+# MAGIC        CASE WHEN cov_dose2_surgery.SURGERY_LASTYR_HES IS NULL THEN 0 ELSE cov_dose2_surgery.SURGERY_LASTYR_HES END AS cov_dose2_surgery,
+# MAGIC        
+# MAGIC        
+# MAGIC        CASE WHEN (cov_dose2_ami.cov_dose2_ami=1 ) THEN 1 ELSE 0 END AS cov_dose2_ami,
+# MAGIC        CASE WHEN (cov_dose2_diabetes.cov_dose2_diabetes=1 ) THEN 1 ELSE 0 END AS cov_dose2_diabetes,
+# MAGIC        CASE WHEN (cov_dose2_depression.cov_dose2_depression=1 ) THEN 1 ELSE 0 END AS cov_dose2_depression,
+# MAGIC        CASE WHEN (cov_dose2_bmi_obesity.cov_dose2_bmi_obesity=1 ) THEN 1 ELSE 0 END AS cov_dose2_bmi_obesity,
+# MAGIC        CASE WHEN (cov_dose2_cancer.cov_dose2_cancer=1 ) THEN 1 ELSE 0 END AS cov_dose2_cancer,
+# MAGIC        CASE WHEN (cov_dose2_copd.cov_dose2_copd=1 ) THEN 1 ELSE 0 END AS cov_dose2_copd,
+# MAGIC        CASE WHEN (cov_dose2_ckd.cov_dose2_ckd=1 ) THEN 1 ELSE 0 END AS cov_dose2_ckd,
+# MAGIC        CASE WHEN (cov_dose2_liver_disease.cov_dose2_liver_disease=1 ) THEN 1 ELSE 0 END AS cov_dose2_liver_disease,
+# MAGIC        CASE WHEN (cov_dose2_dementia.cov_dose2_dementia=1 ) THEN 1 ELSE 0 END AS cov_dose2_dementia,
+# MAGIC        CASE WHEN (cov_dose2_stroke_all.cov_dose2_stroke_all=1 ) THEN 1 ELSE 0 END AS cov_dose2_stroke_all,
+# MAGIC        CASE WHEN (cov_dose2_all_vte.cov_dose2_all_vte=1 ) THEN 1 ELSE 0 END AS cov_dose2_all_vte,
+# MAGIC        CASE WHEN (cov_dose2_thrombophilia.cov_dose2_thrombophilia=1 ) THEN 1 ELSE 0 END AS cov_dose2_thrombophilia,
+# MAGIC        CASE WHEN (cov_dose2_cov_arterial.cov_dose2_cov_arterial=1 ) THEN 1 ELSE 0 END AS cov_dose2_cov_arterial,
+# MAGIC        CASE WHEN (cov_dose2_cov_venous.cov_dose2_cov_venous=1 ) THEN 1 ELSE 0 END AS cov_dose2_cov_venous,
+# MAGIC        
+# MAGIC        CASE WHEN (cov_dose2_meds_antiplatelet.antiplatelet=1) THEN 1 ELSE 0 END AS cov_dose2_meds_antiplatelet,
+# MAGIC        CASE WHEN (cov_dose2_meds_bp_lowering.bp_lowering=1) THEN 1 ELSE 0 END AS cov_dose2_meds_bp_lowering,
+# MAGIC        CASE WHEN (cov_dose2_meds_lipid_lowering.lipid_lowering=1) THEN 1 ELSE 0 END AS cov_dose2_meds_lipid_lowering,
+# MAGIC        CASE WHEN (cov_dose2_meds_anticoagulant.anticoagulant=1) THEN 1 ELSE 0 END AS cov_dose2_meds_anticoagulant,
+# MAGIC        CASE WHEN (cov_dose2_meds_cocp.cocp=1) THEN 1 ELSE 0 END AS cov_dose2_meds_cocp,
+# MAGIC        CASE WHEN (cov_dose2_meds_hrt.hrt=1) THEN 1 ELSE 0 END AS cov_dose2_meds_hrt      
+# MAGIC        
+# MAGIC
+# MAGIC FROM ccu002_06_exclusion_cohort_spine_output as cohort   
+# MAGIC
+# MAGIC --dose 2 covariates datasets
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_smoking_final AS cov_dose2_smoking_final ON cohort.NHS_NUMBER_DEID = cov_dose2_smoking_final.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_prior_covid19 AS cov_dose2_prior_covid19 ON cohort.NHS_NUMBER_DEID = cov_dose2_prior_covid19.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_disorders AS cov_dose2_disorders ON cohort.NHS_NUMBER_DEID = cov_dose2_disorders.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_surgery AS cov_dose2_surgery ON cohort.NHS_NUMBER_DEID = cov_dose2_surgery.PERSON_ID_DEID
+# MAGIC
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_ami AS cov_dose2_ami ON cohort.NHS_NUMBER_DEID = cov_dose2_ami.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_diabetes AS cov_dose2_diabetes ON cohort.NHS_NUMBER_DEID = cov_dose2_diabetes.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_depression AS cov_dose2_depression ON cohort.NHS_NUMBER_DEID = cov_dose2_depression.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_bmi_obesity AS cov_dose2_bmi_obesity ON cohort.NHS_NUMBER_DEID = cov_dose2_bmi_obesity.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_cancer AS cov_dose2_cancer ON cohort.NHS_NUMBER_DEID = cov_dose2_cancer.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_copd AS cov_dose2_copd ON cohort.NHS_NUMBER_DEID = cov_dose2_copd.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_ckd AS cov_dose2_ckd ON cohort.NHS_NUMBER_DEID = cov_dose2_ckd.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_liver_disease AS cov_dose2_liver_disease ON cohort.NHS_NUMBER_DEID = cov_dose2_liver_disease.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_dementia AS cov_dose2_dementia ON cohort.NHS_NUMBER_DEID = cov_dose2_dementia.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_stroke_all AS cov_dose2_stroke_all ON cohort.NHS_NUMBER_DEID = cov_dose2_stroke_all.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_all_vte AS cov_dose2_all_vte ON cohort.NHS_NUMBER_DEID = cov_dose2_all_vte.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_thrombophilia AS cov_dose2_thrombophilia ON cohort.NHS_NUMBER_DEID = cov_dose2_thrombophilia.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_cov_arterial AS cov_dose2_cov_arterial ON cohort.NHS_NUMBER_DEID = cov_dose2_cov_arterial.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_cov_venous AS cov_dose2_cov_venous ON cohort.NHS_NUMBER_DEID = cov_dose2_cov_venous.NHS_NUMBER_DEID
+# MAGIC
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_meds_antiplatelet AS cov_dose2_meds_antiplatelet ON cohort.NHS_NUMBER_DEID = cov_dose2_meds_antiplatelet.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_meds_bp_lowering AS cov_dose2_meds_bp_lowering ON cohort.NHS_NUMBER_DEID = cov_dose2_meds_bp_lowering.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_meds_lipid_lowering AS cov_dose2_meds_lipid_lowering ON cohort.NHS_NUMBER_DEID = cov_dose2_meds_lipid_lowering.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_meds_anticoagulant AS cov_dose2_meds_anticoagulant ON cohort.NHS_NUMBER_DEID = cov_dose2_meds_anticoagulant.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_meds_cocp AS cov_dose2_meds_cocp ON cohort.NHS_NUMBER_DEID = cov_dose2_meds_cocp.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_dose2_nv_meds_hrt AS cov_dose2_meds_hrt ON cohort.NHS_NUMBER_DEID = cov_dose2_meds_hrt.NHS_NUMBER_DEID
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT (*) FROM ccu002_06_cohort_dose2_cov
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_dose2_out AS
+# MAGIC SELECT cohort.CHUNK,
+# MAGIC        cohort.NHS_NUMBER_DEID,
+# MAGIC        
+# MAGIC        --dose 2 outcomes
+# MAGIC        out_dose2_any_ami.out_dose2_any_ami AS out_dose2_any_ami,
+# MAGIC        out_dose2_any_stroke_isch.out_dose2_any_stroke_isch AS out_dose2_any_stroke_isch,
+# MAGIC        out_dose2_any_pe.out_dose2_any_pe AS out_dose2_any_pe,
+# MAGIC        out_dose2_any_dvt.out_dose2_any_dvt AS out_dose2_any_dvt,
+# MAGIC        out_dose2_any_icvt.out_dose2_any_icvt AS out_dose2_any_icvt,
+# MAGIC        out_dose2_any_portal_vein_thrombosis.out_dose2_any_portal_vein_thrombosis AS out_dose2_any_portal_vein_thrombosis,
+# MAGIC        out_dose2_any_any_thrombocytopenia.out_dose2_any_any_thrombocytopenia AS out_dose2_any_any_thrombocytopenia,
+# MAGIC        out_dose2_any_stroke_sah_hs.out_dose2_any_stroke_sah_hs AS out_dose2_any_stroke_sah_hs,
+# MAGIC        out_dose2_any_mesenteric_thrombus.out_dose2_any_mesenteric_thrombus AS out_dose2_any_mesenteric_thrombus,
+# MAGIC        out_dose2_any_myocarditis.out_dose2_any_myocarditis AS out_dose2_any_myocarditis,
+# MAGIC        out_dose2_any_pericarditis.out_dose2_any_pericarditis AS out_dose2_any_pericarditis,
+# MAGIC        out_dose2_any_arterial.out_dose2_any_arterial AS out_dose2_any_arterial,
+# MAGIC        out_dose2_any_venous.out_dose2_any_venous AS out_dose2_any_venous,
+# MAGIC        
+# MAGIC        out_dose2_first_ami.out_dose2_first_ami AS out_dose2_first_ami,
+# MAGIC        out_dose2_first_stroke_isch.out_dose2_first_stroke_isch AS out_dose2_first_stroke_isch,
+# MAGIC        out_dose2_first_pe.out_dose2_first_pe AS out_dose2_first_pe,
+# MAGIC        out_dose2_first_dvt.out_dose2_first_dvt AS out_dose2_first_dvt,
+# MAGIC        out_dose2_first_icvt.out_dose2_first_icvt AS out_dose2_first_icvt,
+# MAGIC        out_dose2_first_portal_vein_thrombosis.out_dose2_first_portal_vein_thrombosis AS out_dose2_first_portal_vein_thrombosis,
+# MAGIC        out_dose2_first_any_thrombocytopenia.out_dose2_first_any_thrombocytopenia AS out_dose2_first_any_thrombocytopenia,
+# MAGIC        out_dose2_first_stroke_sah_hs.out_dose2_first_stroke_sah_hs AS out_dose2_first_stroke_sah_hs,
+# MAGIC        out_dose2_first_mesenteric_thrombus.out_dose2_first_mesenteric_thrombus AS out_dose2_first_mesenteric_thrombus,
+# MAGIC        out_dose2_first_myocarditis.out_dose2_first_myocarditis AS out_dose2_first_myocarditis,
+# MAGIC        out_dose2_first_pericarditis.out_dose2_first_pericarditis AS out_dose2_first_pericarditis,
+# MAGIC        out_dose2_first_arterial.out_dose2_first_arterial AS out_dose2_first_arterial,
+# MAGIC        out_dose2_first_venous.out_dose2_first_venous AS out_dose2_first_venous
+# MAGIC        
+# MAGIC FROM ccu002_06_exclusion_cohort_spine_output as cohort 
+# MAGIC   
+# MAGIC   --dose 2 outcome datasets
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_first_ami AS out_dose2_first_ami ON cohort.NHS_NUMBER_DEID = out_dose2_first_ami.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_first_stroke_isch AS out_dose2_first_stroke_isch ON cohort.NHS_NUMBER_DEID = out_dose2_first_stroke_isch.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_first_pe AS out_dose2_first_pe ON cohort.NHS_NUMBER_DEID = out_dose2_first_pe.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_first_dvt AS out_dose2_first_dvt ON cohort.NHS_NUMBER_DEID = out_dose2_first_dvt.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_first_icvt AS out_dose2_first_icvt ON cohort.NHS_NUMBER_DEID = out_dose2_first_icvt.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_first_portal_vein_thrombosis AS out_dose2_first_portal_vein_thrombosis ON cohort.NHS_NUMBER_DEID = out_dose2_first_portal_vein_thrombosis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_first_any_thrombocytopenia AS out_dose2_first_any_thrombocytopenia ON cohort.NHS_NUMBER_DEID = out_dose2_first_any_thrombocytopenia.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_first_stroke_sah_hs AS out_dose2_first_stroke_sah_hs ON cohort.NHS_NUMBER_DEID = out_dose2_first_stroke_sah_hs.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_first_mesenteric_thrombus AS out_dose2_first_mesenteric_thrombus ON cohort.NHS_NUMBER_DEID = out_dose2_first_mesenteric_thrombus.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_first_myocarditis AS out_dose2_first_myocarditis ON cohort.NHS_NUMBER_DEID = out_dose2_first_myocarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_first_pericarditis AS out_dose2_first_pericarditis ON cohort.NHS_NUMBER_DEID = out_dose2_first_pericarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_first_arterial AS out_dose2_first_arterial ON cohort.NHS_NUMBER_DEID = out_dose2_first_arterial.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_first_venous AS out_dose2_first_venous ON cohort.NHS_NUMBER_DEID = out_dose2_first_venous.NHS_NUMBER_DEID
+# MAGIC
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_any_ami AS out_dose2_any_ami ON cohort.NHS_NUMBER_DEID = out_dose2_any_ami.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_any_stroke_isch AS out_dose2_any_stroke_isch ON cohort.NHS_NUMBER_DEID = out_dose2_any_stroke_isch.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_any_pe AS out_dose2_any_pe ON cohort.NHS_NUMBER_DEID = out_dose2_any_pe.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_any_dvt AS out_dose2_any_dvt ON cohort.NHS_NUMBER_DEID = out_dose2_any_dvt.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_any_icvt AS out_dose2_any_icvt ON cohort.NHS_NUMBER_DEID = out_dose2_any_icvt.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_any_portal_vein_thrombosis AS out_dose2_any_portal_vein_thrombosis ON cohort.NHS_NUMBER_DEID = out_dose2_any_portal_vein_thrombosis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_any_any_thrombocytopenia AS out_dose2_any_any_thrombocytopenia ON cohort.NHS_NUMBER_DEID = out_dose2_any_any_thrombocytopenia.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_any_stroke_sah_hs AS out_dose2_any_stroke_sah_hs ON cohort.NHS_NUMBER_DEID = out_dose2_any_stroke_sah_hs.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_any_mesenteric_thrombus AS out_dose2_any_mesenteric_thrombus ON cohort.NHS_NUMBER_DEID = out_dose2_any_mesenteric_thrombus.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_any_myocarditis AS out_dose2_any_myocarditis ON cohort.NHS_NUMBER_DEID = out_dose2_any_myocarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_any_pericarditis AS out_dose2_any_pericarditis ON cohort.NHS_NUMBER_DEID = out_dose2_any_pericarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_any_arterial AS out_dose2_any_arterial ON cohort.NHS_NUMBER_DEID = out_dose2_any_arterial.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_dose2_nv_any_venous AS out_dose2_any_venous ON cohort.NHS_NUMBER_DEID = out_dose2_any_venous.NHS_NUMBER_DEID    
+# MAGIC        
+# MAGIC        
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT (*) FROM ccu002_06_cohort_dose2_out
+
+# COMMAND ----------
+
+# MAGIC %md ## Make Booster variables temporary views
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_booster_cov_main AS
+# MAGIC SELECT cohort.CHUNK,
+# MAGIC        cohort.NHS_NUMBER_DEID,
+# MAGIC
+# MAGIC        --booster covariates
+# MAGIC        CASE WHEN cov_booster_smoking_final.smoking_status IS NULL THEN 'missing' ELSE cov_booster_smoking_final.smoking_status END AS cov_booster_smoking_status,
+# MAGIC        CASE WHEN (cov_booster_prior_covid19.cov_booster_prior_covid19=1) THEN 1 ELSE 0 END AS cov_booster_prior_covid19,
+# MAGIC        CASE WHEN cov_booster_disorders.N_DISORDER IS NULL THEN 0 ELSE cov_booster_disorders.N_DISORDER END AS cov_booster_disorders,
+# MAGIC        CASE WHEN cov_booster_surgery.SURGERY_LASTYR_HES IS NULL THEN 0 ELSE cov_booster_surgery.SURGERY_LASTYR_HES END AS cov_booster_surgery,
+# MAGIC        
+# MAGIC        
+# MAGIC        CASE WHEN (cov_booster_ami.cov_booster_ami=1 ) THEN 1 ELSE 0 END AS cov_booster_ami,
+# MAGIC        CASE WHEN (cov_booster_diabetes.cov_booster_diabetes=1 ) THEN 1 ELSE 0 END AS cov_booster_diabetes,
+# MAGIC        CASE WHEN (cov_booster_depression.cov_booster_depression=1 ) THEN 1 ELSE 0 END AS cov_booster_depression,
+# MAGIC        CASE WHEN (cov_booster_bmi_obesity.cov_booster_bmi_obesity=1 ) THEN 1 ELSE 0 END AS cov_booster_bmi_obesity,
+# MAGIC        CASE WHEN (cov_booster_cancer.cov_booster_cancer=1 ) THEN 1 ELSE 0 END AS cov_booster_cancer,
+# MAGIC        CASE WHEN (cov_booster_copd.cov_booster_copd=1 ) THEN 1 ELSE 0 END AS cov_booster_copd,
+# MAGIC        CASE WHEN (cov_booster_ckd.cov_booster_ckd=1 ) THEN 1 ELSE 0 END AS cov_booster_ckd,
+# MAGIC        CASE WHEN (cov_booster_liver_disease.cov_booster_liver_disease=1 ) THEN 1 ELSE 0 END AS cov_booster_liver_disease,
+# MAGIC        CASE WHEN (cov_booster_dementia.cov_booster_dementia=1 ) THEN 1 ELSE 0 END AS cov_booster_dementia,
+# MAGIC        CASE WHEN (cov_booster_stroke_all.cov_booster_stroke_all=1 ) THEN 1 ELSE 0 END AS cov_booster_stroke_all,
+# MAGIC        CASE WHEN (cov_booster_all_vte.cov_booster_all_vte=1 ) THEN 1 ELSE 0 END AS cov_booster_all_vte,
+# MAGIC        CASE WHEN (cov_booster_thrombophilia.cov_booster_thrombophilia=1 ) THEN 1 ELSE 0 END AS cov_booster_thrombophilia,
+# MAGIC        CASE WHEN (cov_booster_cov_arterial.cov_booster_cov_arterial=1 ) THEN 1 ELSE 0 END AS cov_booster_cov_arterial,
+# MAGIC        CASE WHEN (cov_booster_cov_venous.cov_booster_cov_venous=1 ) THEN 1 ELSE 0 END AS cov_booster_cov_venous
+# MAGIC            
+# MAGIC        
+# MAGIC FROM ccu002_06_exclusion_cohort_spine_output as cohort 
+# MAGIC
+# MAGIC --booster covariate datasets
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_smoking_final AS cov_booster_smoking_final ON cohort.NHS_NUMBER_DEID = cov_booster_smoking_final.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_prior_covid19 AS cov_booster_prior_covid19 ON cohort.NHS_NUMBER_DEID = cov_booster_prior_covid19.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_disorders AS cov_booster_disorders ON cohort.NHS_NUMBER_DEID = cov_booster_disorders.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_surgery AS cov_booster_surgery ON cohort.NHS_NUMBER_DEID = cov_booster_surgery.PERSON_ID_DEID
+# MAGIC
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_ami AS cov_booster_ami ON cohort.NHS_NUMBER_DEID = cov_booster_ami.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_diabetes AS cov_booster_diabetes ON cohort.NHS_NUMBER_DEID = cov_booster_diabetes.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_depression AS cov_booster_depression ON cohort.NHS_NUMBER_DEID = cov_booster_depression.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_bmi_obesity AS cov_booster_bmi_obesity ON cohort.NHS_NUMBER_DEID = cov_booster_bmi_obesity.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_cancer AS cov_booster_cancer ON cohort.NHS_NUMBER_DEID = cov_booster_cancer.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_copd AS cov_booster_copd ON cohort.NHS_NUMBER_DEID = cov_booster_copd.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_ckd AS cov_booster_ckd ON cohort.NHS_NUMBER_DEID = cov_booster_ckd.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_liver_disease AS cov_booster_liver_disease ON cohort.NHS_NUMBER_DEID = cov_booster_liver_disease.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_dementia AS cov_booster_dementia ON cohort.NHS_NUMBER_DEID = cov_booster_dementia.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_stroke_all AS cov_booster_stroke_all ON cohort.NHS_NUMBER_DEID = cov_booster_stroke_all.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_all_vte AS cov_booster_all_vte ON cohort.NHS_NUMBER_DEID = cov_booster_all_vte.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_thrombophilia AS cov_booster_thrombophilia ON cohort.NHS_NUMBER_DEID = cov_booster_thrombophilia.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_cov_arterial AS cov_booster_cov_arterial ON cohort.NHS_NUMBER_DEID = cov_booster_cov_arterial.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_cov_venous AS cov_booster_cov_venous ON cohort.NHS_NUMBER_DEID = cov_booster_cov_venous.NHS_NUMBER_DEID
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT (*) FROM ccu002_06_cohort_booster_cov_main
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_booster_cov_meds AS
+# MAGIC SELECT cohort.CHUNK,
+# MAGIC        cohort.NHS_NUMBER_DEID,
+# MAGIC        
+# MAGIC        --booster covariates (meds)
+# MAGIC        
+# MAGIC        CASE WHEN (cov_booster_meds_antiplatelet.antiplatelet=1) THEN 1 ELSE 0 END AS cov_booster_meds_antiplatelet,
+# MAGIC        CASE WHEN (cov_booster_meds_bp_lowering.bp_lowering=1) THEN 1 ELSE 0 END AS cov_booster_meds_bp_lowering,
+# MAGIC        CASE WHEN (cov_booster_meds_lipid_lowering.lipid_lowering=1) THEN 1 ELSE 0 END AS cov_booster_meds_lipid_lowering,
+# MAGIC        CASE WHEN (cov_booster_meds_anticoagulant.anticoagulant=1) THEN 1 ELSE 0 END AS cov_booster_meds_anticoagulant,
+# MAGIC        CASE WHEN (cov_booster_meds_cocp.cocp=1) THEN 1 ELSE 0 END AS cov_booster_meds_cocp,
+# MAGIC        CASE WHEN (cov_booster_meds_hrt.hrt=1) THEN 1 ELSE 0 END AS cov_booster_meds_hrt
+# MAGIC        
+# MAGIC FROM ccu002_06_exclusion_cohort_spine_output as cohort 
+# MAGIC
+# MAGIC --booster covariate datasets (meds)
+# MAGIC        
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_meds_antiplatelet AS cov_booster_meds_antiplatelet ON cohort.NHS_NUMBER_DEID = cov_booster_meds_antiplatelet.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_meds_bp_lowering AS cov_booster_meds_bp_lowering ON cohort.NHS_NUMBER_DEID = cov_booster_meds_bp_lowering.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_meds_lipid_lowering AS cov_booster_meds_lipid_lowering ON cohort.NHS_NUMBER_DEID = cov_booster_meds_lipid_lowering.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_meds_anticoagulant AS cov_booster_meds_anticoagulant ON cohort.NHS_NUMBER_DEID = cov_booster_meds_anticoagulant.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_meds_cocp AS cov_booster_meds_cocp ON cohort.NHS_NUMBER_DEID = cov_booster_meds_cocp.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dars_nic_391419_j3w9t_collab.ccu002_06_cov_booster_nv_meds_hrt AS cov_booster_meds_hrt ON cohort.NHS_NUMBER_DEID = cov_booster_meds_hrt.NHS_NUMBER_DEID       
+# MAGIC        
+# MAGIC        
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT (*) FROM ccu002_06_cohort_booster_cov_meds
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_booster_out AS
+# MAGIC SELECT cohort.CHUNK,
+# MAGIC        cohort.NHS_NUMBER_DEID,
+# MAGIC        
+# MAGIC        --booster outcomes
+# MAGIC        out_booster_any_ami.out_booster_any_ami AS out_booster_any_ami,
+# MAGIC        out_booster_any_stroke_isch.out_booster_any_stroke_isch AS out_booster_any_stroke_isch,
+# MAGIC        out_booster_any_pe.out_booster_any_pe AS out_booster_any_pe,
+# MAGIC        out_booster_any_dvt.out_booster_any_dvt AS out_booster_any_dvt,
+# MAGIC        out_booster_any_icvt.out_booster_any_icvt AS out_booster_any_icvt,
+# MAGIC        out_booster_any_portal_vein_thrombosis.out_booster_any_portal_vein_thrombosis AS out_booster_any_portal_vein_thrombosis,
+# MAGIC        out_booster_any_any_thrombocytopenia.out_booster_any_any_thrombocytopenia AS out_booster_any_any_thrombocytopenia,
+# MAGIC        out_booster_any_stroke_sah_hs.out_booster_any_stroke_sah_hs AS out_booster_any_stroke_sah_hs,
+# MAGIC        out_booster_any_mesenteric_thrombus.out_booster_any_mesenteric_thrombus AS out_booster_any_mesenteric_thrombus,
+# MAGIC        out_booster_any_myocarditis.out_booster_any_myocarditis AS out_booster_any_myocarditis,
+# MAGIC        out_booster_any_pericarditis.out_booster_any_pericarditis AS out_booster_any_pericarditis,
+# MAGIC        out_booster_any_arterial.out_booster_any_arterial AS out_booster_any_arterial,
+# MAGIC        out_booster_any_venous.out_booster_any_venous AS out_booster_any_venous,
+# MAGIC        
+# MAGIC        out_booster_first_ami.out_booster_first_ami AS out_booster_first_ami,
+# MAGIC        out_booster_first_stroke_isch.out_booster_first_stroke_isch AS out_booster_first_stroke_isch,
+# MAGIC        out_booster_first_pe.out_booster_first_pe AS out_booster_first_pe,
+# MAGIC        out_booster_first_dvt.out_booster_first_dvt AS out_booster_first_dvt,
+# MAGIC        out_booster_first_icvt.out_booster_first_icvt AS out_booster_first_icvt,
+# MAGIC        out_booster_first_portal_vein_thrombosis.out_booster_first_portal_vein_thrombosis AS out_booster_first_portal_vein_thrombosis,
+# MAGIC        out_booster_first_any_thrombocytopenia.out_booster_first_any_thrombocytopenia AS out_booster_first_any_thrombocytopenia,
+# MAGIC        out_booster_first_stroke_sah_hs.out_booster_first_stroke_sah_hs AS out_booster_first_stroke_sah_hs,
+# MAGIC        out_booster_first_mesenteric_thrombus.out_booster_first_mesenteric_thrombus AS out_booster_first_mesenteric_thrombus,
+# MAGIC        out_booster_first_myocarditis.out_booster_first_myocarditis AS out_booster_first_myocarditis,
+# MAGIC        out_booster_first_pericarditis.out_booster_first_pericarditis AS out_booster_first_pericarditis,
+# MAGIC        out_booster_first_arterial.out_booster_first_arterial AS out_booster_first_arterial,
+# MAGIC        out_booster_first_venous.out_booster_first_venous AS out_booster_first_venous  
+# MAGIC        
+# MAGIC FROM ccu002_06_exclusion_cohort_spine_output as cohort 
+# MAGIC
+# MAGIC --booster outcome datasets
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_first_ami AS out_booster_first_ami ON cohort.NHS_NUMBER_DEID = out_booster_first_ami.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_first_stroke_isch AS out_booster_first_stroke_isch ON cohort.NHS_NUMBER_DEID = out_booster_first_stroke_isch.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_first_pe AS out_booster_first_pe ON cohort.NHS_NUMBER_DEID = out_booster_first_pe.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_first_dvt AS out_booster_first_dvt ON cohort.NHS_NUMBER_DEID = out_booster_first_dvt.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_first_icvt AS out_booster_first_icvt ON cohort.NHS_NUMBER_DEID = out_booster_first_icvt.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_first_portal_vein_thrombosis AS out_booster_first_portal_vein_thrombosis ON cohort.NHS_NUMBER_DEID = out_booster_first_portal_vein_thrombosis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_first_any_thrombocytopenia AS out_booster_first_any_thrombocytopenia ON cohort.NHS_NUMBER_DEID = out_booster_first_any_thrombocytopenia.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_first_stroke_sah_hs AS out_booster_first_stroke_sah_hs ON cohort.NHS_NUMBER_DEID = out_booster_first_stroke_sah_hs.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_first_mesenteric_thrombus AS out_booster_first_mesenteric_thrombus ON cohort.NHS_NUMBER_DEID = out_booster_first_mesenteric_thrombus.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_first_myocarditis AS out_booster_first_myocarditis ON cohort.NHS_NUMBER_DEID = out_booster_first_myocarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_first_pericarditis AS out_booster_first_pericarditis ON cohort.NHS_NUMBER_DEID = out_booster_first_pericarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_first_arterial AS out_booster_first_arterial ON cohort.NHS_NUMBER_DEID = out_booster_first_arterial.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_first_venous AS out_booster_first_venous ON cohort.NHS_NUMBER_DEID = out_booster_first_venous.NHS_NUMBER_DEID
+# MAGIC
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_any_ami AS out_booster_any_ami ON cohort.NHS_NUMBER_DEID = out_booster_any_ami.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_any_stroke_isch AS out_booster_any_stroke_isch ON cohort.NHS_NUMBER_DEID = out_booster_any_stroke_isch.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_any_pe AS out_booster_any_pe ON cohort.NHS_NUMBER_DEID = out_booster_any_pe.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_any_dvt AS out_booster_any_dvt ON cohort.NHS_NUMBER_DEID = out_booster_any_dvt.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_any_icvt AS out_booster_any_icvt ON cohort.NHS_NUMBER_DEID = out_booster_any_icvt.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_any_portal_vein_thrombosis AS out_booster_any_portal_vein_thrombosis ON cohort.NHS_NUMBER_DEID = out_booster_any_portal_vein_thrombosis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_any_any_thrombocytopenia AS out_booster_any_any_thrombocytopenia ON cohort.NHS_NUMBER_DEID = out_booster_any_any_thrombocytopenia.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_any_stroke_sah_hs AS out_booster_any_stroke_sah_hs ON cohort.NHS_NUMBER_DEID = out_booster_any_stroke_sah_hs.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_any_mesenteric_thrombus AS out_booster_any_mesenteric_thrombus ON cohort.NHS_NUMBER_DEID = out_booster_any_mesenteric_thrombus.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_any_myocarditis AS out_booster_any_myocarditis ON cohort.NHS_NUMBER_DEID = out_booster_any_myocarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_any_pericarditis AS out_booster_any_pericarditis ON cohort.NHS_NUMBER_DEID = out_booster_any_pericarditis.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_any_arterial AS out_booster_any_arterial ON cohort.NHS_NUMBER_DEID = out_booster_any_arterial.NHS_NUMBER_DEID
+# MAGIC LEFT JOIN dsa_391419_j3w9t_collab.ccu002_06_out_booster_nv_any_venous AS out_booster_any_venous ON cohort.NHS_NUMBER_DEID = out_booster_any_venous.NHS_NUMBER_DEID
+# MAGIC        
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT (*) FROM ccu002_06_cohort_booster_out
+
+# COMMAND ----------
+
+# MAGIC %md ## Save cohort tables
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_exclusion_cohort_spine_output_3mil_nv AS
+# MAGIC select * from ccu002_06_exclusion_cohort_spine_output;
+# MAGIC
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_dose1_cov_3mil_nv AS
+# MAGIC select * from ccu002_06_cohort_dose1_cov;
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_dose1_out_3mil_nv AS
+# MAGIC select * from ccu002_06_cohort_dose1_out;
+# MAGIC
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_dose2_cov_3mil_nv AS
+# MAGIC select * from ccu002_06_cohort_dose2_cov;
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_dose2_out_3mil_nv AS
+# MAGIC select * from ccu002_06_cohort_dose2_out;
+# MAGIC
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_booster_cov_main_3mil_nv AS
+# MAGIC select * from ccu002_06_cohort_booster_cov_main;
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_booster_cov_meds_3mil_nv AS
+# MAGIC select * from ccu002_06_cohort_booster_cov_meds;
+# MAGIC CREATE OR REPLACE TEMP VIEW ccu002_06_cohort_booster_out_3mil_nv AS
+# MAGIC select * from ccu002_06_cohort_booster_out;
+
+# COMMAND ----------
+
+drop_create_table('ccu002_06_exclusion_cohort_spine_output_3mil_nv')
+
+drop_create_table('ccu002_06_cohort_dose1_cov_3mil_nv')
+
+drop_create_table('ccu002_06_cohort_dose1_out_3mil_nv')
+
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC describe extended dsa_391419_j3w9t_collab.ccu002_06_cohort_dose1_out_3mil_nv 
+
+# COMMAND ----------
+
+drop_create_table('ccu002_06_cohort_dose2_cov_3mil_nv')
+
+drop_create_table('ccu002_06_cohort_dose2_out_3mil_nv')
+
+
+# COMMAND ----------
+
+drop_create_table('ccu002_06_cohort_booster_cov_main_3mil_nv')
+
+drop_create_table('ccu002_06_cohort_booster_cov_meds_3mil_nv')
+
+drop_create_table('ccu002_06_cohort_booster_out_3mil_nv')
+
+
+# COMMAND ----------
+
