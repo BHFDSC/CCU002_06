@@ -26,7 +26,7 @@ rm_leq2_nlevel1_covars <- function(data_surv, covar_names,fml,expo,event,agegp,s
   
   print(str(factor_covars_postexpo_event))
 
-  single_level_factors <- factor_covars_postexpo_event %>% dplyr::select_if(~ is.factor(.) & (nlevels(.)==1) ) %>% colnames()
+  
   # table(factor_covars %>% dplyr::select(region_name))
   
   covars2rm <- lapply(colnames(factor_covars_postexpo_event) %>% as.list(), function(col){
@@ -73,7 +73,7 @@ rm_leq2_nlevel1_covars <- function(data_surv, covar_names,fml,expo,event,agegp,s
       return(df)
     }) %>% rbindlist() %>% dplyr::filter(any_leq2==TRUE) %>% pull(covariate)
   }
-  
+  single_level_factors <- factor_covars_postexpo_event %>% dplyr::select_if(~ is.factor(.) & (nlevels(.)==1) ) %>% colnames()
   covars2rm <- c(covars2rm, single_level_factors)
   
   cat("covariates with rare level -- to remove......\n")
