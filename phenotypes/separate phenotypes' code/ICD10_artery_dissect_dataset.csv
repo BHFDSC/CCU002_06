@@ -1,0 +1,5 @@
+"Code","Description","Name"
+"I72.1","Aneurysm and dissection of artery of upper extremity","artery_dissect"
+"I72.6","Dissection of vertebral artery","artery_dissect"
+"I71.0","Dissection of aorta [any part]","artery_dissect"
+"I72.0","Aneurysm and dissection of carotid artery","artery_dissect"
