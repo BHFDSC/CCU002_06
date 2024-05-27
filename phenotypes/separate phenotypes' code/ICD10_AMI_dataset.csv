@@ -1,0 +1,6 @@
+Code,Description,Name
+I21,Acute myocardial infarction,AMI
+I22,Subsequent myocardial infarction,AMI
+I23,Certain current complications following acute myocardial infarction,AMI
+I25.2,Old myocardial infarction,AMI
+I24.1,Dressler's syndrome,AMI
