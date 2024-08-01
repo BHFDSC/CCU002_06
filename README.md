@@ -1,4 +1,4 @@
-# Long-term cardiovascular safety of COVID-19 vaccination according to brand, dose and combinations: cohort study of 46 million adults in England
+# Cohort study of cardiovascular safety of different COVID-19 vaccination doses among 46 million adults in England
 
 **Samantha Ip^, Teri-Louise North^, Fatemeh Torabi, Yangfan Li, Hoda Abbasizanjani, Ashley Akbari, Elsie Horne, Rachel Denholm, Spencer Keene, Spiros Denaxas, Amitava Banerjee, Kamlesh Khunti, Cathie Sudlow, William N Whiteley, Jonathan A C Sterne^, Angela M Wood^, Venexia Walker^, on behalf of the CVD-COVID-UK/COVID-IMPACT Consortium and the Longitudinal Health and Wellbeing COVID-19 National Core Study**
 
@@ -13,7 +13,7 @@ We will compare the risk of developing one of these conditions among people who 
 This research will provide reliable information about any risks associated with COVID-19 vaccines to medicine regulators, the UK Departments of Health, health professionals, and the public. It will be important to understand not only whether there is an increased risk with a COVID vaccine but also the size of any increased risk and whether it only applies to particular groups of people. It will also be important to understand how any risk compares with the benefits of the vaccine, which are known to be substantial. 
 
 ## How to cite this work
-> Link to preprint on medRxiv to follow
+Ip, S., North, TL., Torabi, F. et al. Cohort study of cardiovascular safety of different COVID-19 vaccination doses among 46 million adults in England. Nat Commun 15, 6085 (2024). https://doi.org/10.1038/s41467-024-49634-x
 
 ## Contents
 
