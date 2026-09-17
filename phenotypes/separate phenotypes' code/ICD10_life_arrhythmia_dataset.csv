@@ -1,0 +1,7 @@
+"Code","Description","Name"
+"I47.2","Ventricular tachycardia","life_arrhythmia"
+"I49.0","Ventricular fibrillation and flutter","life_arrhythmia"
+"I47.0","Re-entry ventricular arrhythmia","life_arrhythmia"
+"I46.0","Cardiac arrest with successful resuscitation","life_arrhythmia"
+"I46.1","Sudden cardiac death, so described","life_arrhythmia"
+"I46.9","Cardiac arrest, unspecified","life_arrhythmia"
